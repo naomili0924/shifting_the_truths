@@ -1,0 +1,413 @@
+scenario:
+  title: 酒庄坠亡
+  setting: >
+    索诺玛的沃斯家族酒庄，正值阿根特生物成立十周年的庄园静修之夜。
+    暴风雨自山间压来。五位宾客、一位主人，外加玩家——一名受邀
+    为周年特辑撰写黛安娜·沃斯人物专访的记者。
+  the_accident: >
+    晚上21:41，在一场刚部分恢复的停电中，黛安娜·沃斯从地窖入口
+    上方的上层露台坠落。一段老旧的栏杆随她一同脱落。玩家从下方
+    庭院目睹了坠落——却没看到露台上发生了什么。暴风雨冲毁了进出
+    道路，警方至少还要两小时才能赶到。盘问的窗口，就是现在。
+  player_role: >
+    受邀的记者。有正当理由向任何人发问，却无权强迫任何人回答。
+
+victim:
+  name: 黛安娜·沃斯
+  role: 阿根特生物联合创始人兼 CEO；庄园主人
+  public_story: 富有远见的创始人，魅力四射，慷慨的东道主
+  private_story: >
+    她精心雕琢着属于自己的传奇：窃取本不属于她的功劳，把秘密
+    当作筹码握在手里，并打算抛弃任何威胁到“黛安娜·沃斯”这个
+    故事的人。
+
+timeline_skeleton:
+  - time: "18:30"
+    beat: 宾客到达；埃琳娜带众人参观庄园，包括地窖与那道栏杆
+      已显老旧的上层露台
+  - time: "20:00"
+    beat: 在下层露台用晚餐，七人皆在场
+  - time: "20:50"
+    beat: >
+      黛安娜的周年致辞：她宣布出售家族庄园、一项“为精简领导层”
+      的公司重组、以她名义授权“子午线”专利，并播放了一段公司
+      历史的回顾影片。
+  - time: "21:05"
+    beat: 暴风雨锋面来袭；停电；点起蜡烛；宾客在黑暗的宅子里散开
+  - time: "21:28"
+    beat: 备用发电机部分恢复供电；灯光忽明忽暗
+  - time: "21:41"
+    beat: 黛安娜从上层露台坠落；那段栏杆脱落；玩家从庭院目睹坠落
+  - time: "21:45"
+    beat: 道路被冲毁，警方延误约两小时
+
+shared_public_knowledge:
+  - 20:50 致辞中所说的一切
+  - 停电以及当晚各节点的先后顺序
+  - 黛安娜坠落、栏杆随她一同脱落
+  - 栏杆老旧、庄园明显资金紧张
+
+characters:
+  - character: 陈马可
+    role: 黛安娜共事十二年的生意伙伴，阿根特生物 CFO
+    public_story: 风度翩翩、事业有成、人人的朋友
+    private_story: >
+      公司其实早已资不抵债；他一直用私人借款填补窟窿，近来还
+      动用了不属于他的钱。
+    access: 客房区；18:30 参观过地窖；曾出资资助露台翻修，
+      清楚那道栏杆的来龙去脉
+    knows_about_others:
+      - 知道“子午线”专利的突破其实是普丽娅·夏尔马的成果
+      - 看见詹姆斯在致辞前往自己杯里倒威士忌
+      - 注意到埃琳娜两年来一直拖延庄园修缮
+    flaws:
+      - id: wounded_pride
+        description: 无法忍受被羞辱或被轻视
+        trigger_vs_victim: 今晚宣布的“重组”就是把他清除出局——
+          一小时前黛安娜已私下告诉他
+        behavioral_tells: 一旦能力受质疑就变得冷淡而拘谨；
+          为自己的决定过度辩解
+        motive_seed: 她正要把他从他一手建起的公司里抹去
+        lie_tendency: 否认有任何冲突；“我们情同手足”
+      - id: gambling_debt
+        description: 欠着危险人物二十万美元
+        trigger_vs_victim: 黛安娜上周发现了账目里的窟窿
+        behavioral_tells: 强迫性地查看手机；回避与钱有关的问题
+        motive_seed: 她扬言静修结束后就去报警
+        lie_tendency: 声称自己财务没问题；被追问就动怒
+
+  - character: 埃琳娜·沃斯-雷耶斯
+    role: 黛安娜的妹妹；庄园的管家
+    public_story: 体面的东道主，家族传承的忠实守护者
+    private_story: >
+      庄园正在败落。她藏起了去年春天那份结构检查报告——正是
+      那份点名露台栏杆的报告。
+    access: 庄园里每一把钥匙；办公室、地窖、工具间
+    knows_about_others:
+      - 看见索菲娅在致辞后躲在食品储藏室里哭
+      - 知道黛安娜与马可在晚餐前于书房争执
+      - 在柴堆后面发现过一只詹姆斯喝空的酒瓶
+    flaws:
+      - id: lifelong_envy
+        description: 自幼便活在黛安娜的阴影里、无人看见
+        trigger_vs_victim: 黛安娜没问过她、连招呼都没打，
+          就宣布要卖掉家族庄园
+        behavioral_tells: 拿“黛安娜的聚光灯”开些苦涩的小玩笑；
+          有人把庄园的功劳归给黛安娜时会去纠正
+        motive_seed: 这桩出售抹去了唯一真正属于她的东西
+        lie_tendency: 声称自己支持出售；“是时候了”
+      - id: guilty_concealment
+        description: 藏起了那份判定栏杆不合格的检查报告
+        trigger_vs_victim: 黛安娜昨天找到了报告，把她的失职
+          称作“正是我要卖掉它的原因”
+        behavioral_tells: 把话题从露台和修缮上引开；
+          一谈到她对庄园的管理就开始辩解
+        motive_seed: 一旦黛安娜揭出那份被藏起的报告，
+          她的失职就会成为她一生的注脚
+        lie_tendency: 坚称去年春天一切都检查过、都合格
+
+  - character: 普丽娅·夏尔马
+    role: 阿根特生物首席科学家；黛安娜的门生
+    public_story: 冉冉升起的新星，对导师忠心耿耿
+    private_story: >
+      “子午线”的突破本是她的成果，黛安娜却据为己有。两年前
+      在截止日的压力下，普丽娅美化过一份验证数据集，而黛安娜知道。
+    access: 客房区；随身带着装有实验室化合物的工具箱；
+      精通药理，包括黛安娜的偏头痛药
+    knows_about_others:
+      - 知道索菲娅经手黛安娜的药片和私人文件
+      - 听见马可在电话里恳求“再宽限两周”
+      - 看出詹姆斯 20:30 时已经醉了
+    flaws:
+      - id: stolen_credit
+        description: 对“子午线”专利署名权埋藏已久的怒火
+        trigger_vs_victim: 致辞宣布以黛安娜的名义授权该专利，
+          只“感谢她的支持”而带过普丽娅
+        behavioral_tells: 有人把专利功劳归给黛安娜时会瑟缩；
+          一谈到谁做了什么就变得分毫不让
+        motive_seed: 只要黛安娜不在了，实验记录本会说出真相
+        lie_tendency: 称黛安娜是自己的导师；“我欠她一切”
+      - id: fear_of_exposure
+        description: 黛安娜手里攥着她造假的数据
+        trigger_vs_victim: 当普丽娅暗示有竞争对手开价时，
+          黛安娜微微一笑，提到了“2024 那份验证集”
+        behavioral_tells: 一谈研究就给出排练过、一字不差的回答；
+          一提试验数据就忽然充满敌意
+        motive_seed: 若黛安娜在审计前死去，那份把柄也随之消失
+        lie_tendency: 否认与任何竞争对手有过接触
+
+  - character: 詹姆斯·奥卡福
+    role: 黛安娜的前夫；被从公司历史中抹去的联合创始人
+    public_story: 早已释怀，此行只为告别旧友
+    private_story: >
+      身无分文。去年那场“不当罢免”诉讼败诉。原本已戒酒半年，
+      直到今晚那段回顾影片——讲了整个公司的故事，却没有他的
+      一帧画面。
+    access: 婚姻年代起就熟悉这座庄园，包括他帮忙重建的那座露台，
+      以及栏杆究竟是怎么拴上的
+    knows_about_others:
+      - 知道索菲娅曾帮黛安娜“整理”过公司档案
+      - 参观时看见埃琳娜独自站在上层露台，攥着栏杆来回试它
+    flaws:
+      - id: erasure_bitterness
+        description: 被从他亲历的历史里抹去
+        trigger_vs_victim: 那段周年影片——十年、两百张照片、
+          竟没有一张有他
+        behavioral_tells: 爱讲“其实那是我建的”这类往事；
+          总在走廊那些老照片旁徘徊
+        motive_seed: 诉讼败了；除非抹去这一切的人消失，
+          否则这抹除便是永久的
+        lie_tendency: 一笑置之；“陈年旧事了，我早放下了”
+      - id: relapse_impulse
+        description: 酒精会溶解他的自制力
+        trigger_vs_victim: 停电期间他当面质问了黛安娜；
+          接下来发生了什么，连他自己也说不清
+        behavioral_tells: 口气里薄荷盖着威士忌；咬字过分小心；
+          总是不停地消失一会儿
+        motive_seed: 不是预谋——只是黑暗中一推，他再也收不回
+        lie_tendency: 声称自己整晚只喝苏打水
+
+  - character: 索菲娅·林德奎斯特
+    role: 黛安娜共事五年的行政助理
+    public_story: 忠诚、能力超群，黛安娜的影子
+    private_story: >
+      在黛安娜的指示下，她签字掩埋了一桩监管问题。昨天，她在
+      黛安娜的草稿箱里发现了自己的解雇信——旁边还有一份备忘录，
+      把那桩文书包装成索菲娅“擅自的个人行为”。
+    access: 黛安娜的日程、文件、设备，她每天早晨准备的药盒，
+      以及办公室的打印机
+    knows_about_others:
+      - 知道黛安娜 19:40 与马可私下会面，马可离开书房时面如死灰
+      - 知道黛安娜偏头痛药的种类与服用时间表
+      - 看见普丽娅在停电期间借口“去拿件毛衣”溜了出去
+    flaws:
+      - id: approval_addiction
+        description: 自我价值完全系于黛安娜的认可
+        trigger_vs_victim: 偷听到黛安娜对马可说，助理“可替换——
+          那正是用她们的意义所在”
+        behavioral_tells: 不停引用黛安娜的话；为一点小错近乎恐慌；
+          提起黛安娜时满怀敬意
+        motive_seed: 一旦被切断唯一的认可来源，
+          忠诚便会翻转成毁灭一切的怒火
+        lie_tendency: 坚称黛安娜待她“像家人一样”
+      - id: scapegoat_panic
+        description: 那份要命的文书上签着她的名字
+        trigger_vs_victim: 她发现了那份把她当替罪羊的备忘录草稿，
+          落款日期是静修结束后的次日清晨
+        behavioral_tells: 对黛安娜文件的细节熟悉得可疑；
+          一问到她偷听到了什么就闪烁其词
+        motive_seed: 若黛安娜在审计前死去，
+          草稿箱就能清空，那份文书也能随之消失
+        lie_tendency: 声称自己无权接触任何财务记录
+
+method_options:
+  # weight：当该手法对所抽中的凶手开放时的相对概率（默认 1）。
+  # “黑暗中推下”人人可用，故调低权重以保持四种手法的均衡。
+  - id: loosened_railing
+    weight: 2
+    description: 事先拧松栏杆螺栓，让这场坠落看起来像年久失修
+    requires_access: [陈马可, 埃琳娜·沃斯-雷耶斯, 詹姆斯·奥卡福]
+    evidence_trail: 老螺栓上有新鲜的工具痕迹；有人去过地窖工具间；
+      那份被藏起的检查报告成了掩护
+  - id: push_in_the_dark
+    weight: 1
+    description: 21:28 到 21:41 间在露台上的一次对峙；临时起意，
+      并无预谋
+    requires_access: [any]
+    evidence_trail: 没有动过手脚；全案系于不在场证明的漏洞、
+      被目击的行踪，以及一个说谎者的崩溃
+  - id: medication_swap
+    weight: 2
+    description: 黛安娜的晚间偏头痛药被换成血管扩张剂；
+      栏杆边的一阵眩晕了结了余下的事
+    requires_access: [索菲娅·林德奎斯特, 普丽娅·夏尔马]
+    evidence_trail: 药片数目少了一粒；工具箱里少了一种化合物，
+      或药盒在不该准备的时间被准备过
+  - id: lure_note
+    weight: 2
+    description: 一张打印的纸条在 21:40 把黛安娜引上了露台
+    requires_access: [埃琳娜·沃斯-雷耶斯, 索菲娅·林德奎斯特]
+    evidence_trail: 停电期间办公室打印机靠备用电源运转过；
+      那张纸条也许还在黛安娜的口袋里
+
+plausibility_matrix:
+  - culprit: 陈马可
+    valid_rolls:
+      - {flaws: [gambling_debt], strength: strong}
+      - {flaws: [wounded_pride, gambling_debt], strength: strong}
+  - culprit: 埃琳娜·沃斯-雷耶斯
+    valid_rolls:
+      - {flaws: [guilty_concealment], strength: strong}
+      - {flaws: [lifelong_envy, guilty_concealment], strength: strong}
+  - culprit: 普丽娅·夏尔马
+    valid_rolls:
+      - {flaws: [fear_of_exposure], strength: strong}
+      - {flaws: [stolen_credit, fear_of_exposure], strength: strong}
+  - culprit: 詹姆斯·奥卡福
+    valid_rolls:
+      - {flaws: [erasure_bitterness, relapse_impulse], strength: strong}
+      - {flaws: [relapse_impulse], strength: medium}
+  - culprit: 索菲娅·林德奎斯特
+    valid_rolls:
+      - {flaws: [approval_addiction, scapegoat_panic], strength: strong}
+      - {flaws: [scapegoat_panic], strength: medium}
+
+special_rolls:
+  - id: true_accident
+    weight: 0.10
+    description: >
+      没有人下手。栏杆早已腐朽，而埃琳娜心知肚明。她的
+      guilty_concealment 缺陷在此全力发作；其余每个人照常为
+      自己的秘密撒谎。正确的解答是“意外，且有人隐瞒了失职”。
+
+# =============================================================
+# 幕 —— 设计者撰写的场景。每一幕：一个地点、可搜查的地点、
+# 物品（部分取决于本局掷出的剧情），以及计时阶段。
+# 每幕的阶段顺序由你定义。
+# 物品条件：{method: <id>} | {accident: true} | {culprit: <name>} | 无 = 始终存在
+# =============================================================
+acts:
+  - act: 1
+    title: "坠落 —— 露台与庭院"
+    scene_intro: >
+      雨点砸在埃琳娜盖住尸体的那块帆布上。断裂的那段栏杆躺在
+      黛安娜身旁，像一份无人签名的供词。埃琳娜正把众人往休息室
+      里赶；你有片刻独自面对现场的时间。
+    spots:
+      - id: railing
+        name: 断裂的那段栏杆
+        empty_text: 碎裂的木头、旧漆、更旧的锈。借着烛光，
+          它再没能告诉你别的。
+        items:
+          - id: tool_marks
+            name: 栏杆螺栓上新鲜的工具痕迹
+            condition: {method: loosened_railing}
+            found_text: 锈层之下，螺纹是亮的。四个固定座中有三个
+              是近期被拧松的，用的是扳手，而且是知道该松哪三个的人。
+          - id: rotten_core
+            name: 腐朽的栏杆芯
+            condition: {accident: true}
+            found_text: 木头在你指间湿软地碎开。这道栏杆已经朽了
+              多年——而有人在腐烂之上刷了漆。
+      - id: stairs
+        name: 通往露台的台阶
+        empty_text: 湿漉漉的石面，读不出什么。
+        items:
+          - id: scuff_marks
+            name: 台阶上新鲜的蹭痕
+            condition: {method: push_in_the_dark}
+            found_text: 一路向上的湿蹭痕——是 21:05 雨下起来之后
+              留下的。有人在黑暗里上去找了黛安娜，又匆匆下来。
+      - id: body
+        name: 黛安娜的遗体
+        empty_text: 你不忍心再去惊动她。
+        items:
+          - id: pocket_note
+            name: 黛安娜口袋里一张潮湿的纸条
+            condition: {method: lure_note}
+            found_text: '打印的，没有署名：“上层露台。21:40。
+              关于那份报告。一个人来。”'
+          - id: grab_bruise
+            name: 黛安娜前臂上一片新鲜的淤痕
+            condition: {method: push_in_the_dark}
+            found_text: 手腕上方有四道椭圆形印痕——是一只手攥出来的，
+              在坠落之前，而非因坠落而来。坠落之前，有人在那露台上
+              死死抓住过她。
+          - id: dianas_phone
+            name: 黛安娜的手机
+            found_text: 屏幕碎了，但还亮着。最后一通拨出电话——
+              陈马可，19:38，四分钟。
+      - id: table
+        name: 被丢下的餐桌
+        empty_text: 冷掉的菜、熄灭的蜡烛、七把椅子。
+        items:
+          - id: seating_chart
+            name: 一张手写的座位表
+            found_text: 黛安娜的笔迹。她把马可安排在远离自己的
+              那一端——把索菲娅安排在自己右手边。
+    phases:
+      - {type: search, time: 8}
+      - {type: talk, time: 12}
+
+  - act: 2
+    title: "宅子 —— 书房与黛安娜的房间"
+    scene_intro: >
+      发电机嗡嗡作响；半座宅子重新亮了起来。埃琳娜打开书房，
+      “好让你看看这里没什么可藏的”。楼上，黛安娜的房门虚掩着。
+    spots:
+      - id: desk
+        name: 书房的书桌与打印机
+        empty_text: 发票、印着庄园抬头的信纸、一盏不亮的台灯。
+        items:
+          - id: printer_log
+            name: 打印机的任务日志
+            condition: {method: lure_note}
+            found_text: 打印机整晚都接着备用电源。日志只显示一项
+              任务——21:15，停电正酣，从任何人都能用到的走廊终端
+              发出。
+          - id: marco_ledger
+            name: 一本马可手写的私人账本
+            found_text: 塞在公司文件后面。给“R.V.”的付款、日期、
+              利息——还有一个二十万美元、本该是公司钱的窟窿。
+      - id: bedroom
+        name: 黛安娜的房间
+        empty_text: 香水味、风暴的微光、一张铺好的床。
+        items:
+          - id: pill_organizer
+            name: 黛安娜的药盒
+            condition: {method: medication_swap}
+            found_text: 今晚这一格是空的，本该如此——可整周的总数
+              少了一粒，而今晚残留的气味，不像她的偏头痛药。
+          - id: drafts_folder
+            name: 黛安娜打开的笔记本电脑，草稿箱
+            found_text: 一封给索菲娅·林德奎斯特的解雇信——下面还有
+              一份备忘录，把“擅自的文书”说成是索菲娅的个人行为。
+              两份的落款日期都是明天。
+      - id: fireplace
+        name: 休息室的壁炉
+        empty_text: 灰烬，和一炉早已熄灭的火。
+        items:
+          - id: cropped_photo
+            name: 一张烧了一半的照片
+            found_text: 十年前的创始团队——黛安娜、马可，还有一个
+              公司历史再不提起的第三人。是詹姆斯，在裁剪开始之前。
+    phases:
+      - {type: search, time: 8}
+      - {type: talk, time: 12}
+
+  - act: 3
+    title: "地窖 —— 工具间与档案室"
+    scene_intro: >
+      警灯在山谷某处缓缓爬行；道路就快通了。埃琳娜的钥匙挂在
+      钩子上。这座宅子还藏着的东西，都藏在下面。
+    spots:
+      - id: tool_room
+        name: 地窖工具间
+        empty_text: 摆放整齐的工具、上过油的合页，埃琳娜的一丝不苟。
+        items:
+          - id: greasy_wrench
+            name: 一把几乎被擦干净的扳手
+            condition: {method: loosened_railing}
+            found_text: 擦过了——可钳口齿缝里仍有油脂，
+              和露台上那些螺纹正好吻合。
+          - id: field_kit
+            name: 普丽娅的工具箱，被怪异地塞在低处
+            condition: {method: medication_swap}
+            found_text: 试剂架上空了一格。标签上，普丽娅工整的字迹
+              写着一种速效血管扩张剂。
+      - id: archive
+        name: 庄园档案架
+        empty_text: 一直追溯到七十年代的酒类账册。
+        items:
+          - id: inspection_report
+            name: 去年春天的结构检查报告
+            found_text: '叠着塞在账册后面。“露台栏杆：危急。禁止
+              承重。立即更换。”报告签收：E. 沃斯-雷耶斯。'
+          - id: empty_bottles
+            name: 一窝喝空的迷你威士忌酒瓶
+            found_text: 藏在架子后面，都是近期的，足有几十只。
+              某人“戒酒半年”早就破功了。
+    phases:
+      - {type: search, time: 6}
+      - {type: talk, time: 10}
+      - {type: search, time: 6}

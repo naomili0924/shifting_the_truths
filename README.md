@@ -9,12 +9,27 @@ with timed search and interrogation phases.
 ```bash
 pip install pyyaml
 export ANTHROPIC_API_KEY=sk-ant-...
-python main.py                    # uses config.yaml
+python main.py                    # uses config.yaml (asks language if unset)
 python main.py --seed 7           # reproduce a specific plot
+python main.py --lang zh          # 用中文游玩
 ```
 
 No key / no network? Test the plumbing with mock agents: set
 `provider: mock` for both agents in config.yaml.
+
+## Language / 语言
+
+The player picks the language; English stays the default and is never
+replaced. Selection order: `--lang en|zh` → `game.lang` in config.yaml
+→ an interactive prompt at startup if neither is set.
+
+Each language ships its own authored case (`game.cases` in config:
+`case.yaml` for English, `case_zh.yaml` for Chinese). All UI, command
+words, LLM prompts, fallback text and logs follow the chosen language;
+`i18n.py` holds every string for both. In Chinese you type Chinese
+commands too (`查看`、`搜查 <地点>`、`询问 <人名>`、`出示`、`返回`、`下一步`),
+and the suspects reply in Chinese. To add a language, add a table to
+`i18n.py` and a `case_<lang>.yaml`; no game logic changes.
 
 ## Per-agent brains (config.yaml)
 
@@ -117,8 +132,10 @@ of play with no spoilers. The `logs/` directory is gitignored.
 
 ## Files
 
-- `config.yaml` — agent brains, time costs, launch mode
-- `case.yaml` — the authored case: cast, flaws, methods, acts, items
+- `config.yaml` — agent brains, time costs, launch mode, language
+- `case.yaml` — the authored case (English): cast, flaws, methods, acts, items
+- `case_zh.yaml` — the authored case (Chinese)
+- `i18n.py` — every player- and LLM-facing string, per language
 - `engine.py` — director roll, judge jobs, prompts, referee, verdict
 - `providers.py` — LLMProvider interface: Anthropic / ONNX / mock
 - `gamelog.py` — session logging (production / developer modes)

@@ -6,6 +6,12 @@ Run:
     export ANTHROPIC_API_KEY=sk-ant-...
     python main.py                       # uses config.yaml
     python main.py --config myconf.yaml --seed 7
+    python main.py --lang zh             # play in Chinese
+    python main.py --mode developer      # full debug logging
+
+Language is the player's choice: --lang en|zh, or game.lang in
+config.yaml, or an interactive prompt at startup if neither is set.
+English stays the default; each language ships its own case file.
 
 Agents (NPCs, judge) each take their brain from config.yaml:
 public API, local ONNX runtime, or mock - independently.
@@ -26,6 +32,7 @@ import yaml
 
 from providers import provider_from_config
 from gamelog import GameLog
+from i18n import t, normalize_lang, EN
 from engine import (
     load_case, Director, GroundTruth, build_npc_system_prompt,
     referee_check, judge_accusation, item_present,
@@ -50,29 +57,53 @@ def ask(prompt: str) -> str:
         sys.exit(0)
 
 
+def resolve_lang(game_cfg: dict, override: str | None) -> str:
+    """--lang > config game.lang > interactive startup prompt."""
+    if override:
+        return normalize_lang(override)
+    if game_cfg.get("lang"):
+        return normalize_lang(game_cfg["lang"])
+    return normalize_lang(ask(EN["ui"]["lang_prompt"]))
+
+
+def resolve_case_path(game_cfg: dict, lang: str) -> str:
+    """Pick the case file for the chosen language."""
+    cases = game_cfg.get("cases") or {}
+    return (cases.get(lang)
+            or game_cfg.get(f"case_{lang}")
+            or game_cfg.get("case", "case.yaml"))
+
+
 class Game:
     def __init__(self, config_path: str, seed_override: int | None,
-                 mode_override: str | None = None):
+                 mode_override: str | None = None,
+                 lang_override: str | None = None):
         with open(config_path, "r", encoding="utf-8") as f:
             self.cfg = yaml.safe_load(f)
+        game_cfg = self.cfg["game"]
         self.costs = self.cfg.get("costs", {})
         self.npc_llm = provider_from_config(self.cfg["agents"]["npc"])
         self.judge_llm = provider_from_config(self.cfg["agents"]["judge"])
 
+        # Language: player's choice (flag > config > startup prompt).
+        self.lang = resolve_lang(game_cfg, lang_override)
+        self.L = t(self.lang)
+        self.ui = self.L["ui"]
+
         # Launch mode: production (conversation only) or developer (also
         # logs the judge's choice, ground truth, and NPC memory per stage).
-        mode = mode_override or self.cfg["game"].get("mode", "production")
-        self.log = GameLog(mode, self.cfg["game"].get("log_dir", "logs"))
+        mode = mode_override or game_cfg.get("mode", "production")
+        self.log = GameLog(mode, game_cfg.get("log_dir", "logs"))
 
-        self.case = load_case(self.cfg["game"].get("case", "case.yaml"))
+        self.case = load_case(resolve_case_path(game_cfg, self.lang))
         seed = seed_override if seed_override is not None \
-            else self.cfg["game"].get("seed")
-        self.director = Director(self.case, seed=seed)
+            else game_cfg.get("seed")
+        self.director = Director(self.case, seed=seed, lang=self.lang)
         # The judge LLM picks the culprit + motive; deterministic code
         # still rolls method, timeline, clues and the accident special.
         self.gt: GroundTruth = self.director.roll(selector=self._select_culprit)
         self.log.dev_log(
-            "ground_truth", is_murder=self.gt.is_murder,
+            "ground_truth", lang=self.lang, is_murder=self.gt.is_murder,
             culprit=self.gt.culprit, flaws=self.gt.active_flaws,
             method=self.gt.method["id"] if self.gt.method else None,
             motive=self.gt.motive, secret_timeline=self.gt.secret_timeline,
@@ -80,12 +111,12 @@ class Game:
 
         self.names = [c["character"] for c in self.case["characters"]]
         self.deeds = judge_generate_deeds(
-            self.case, self.gt, self.judge_llm, self.director.rng)
+            self.case, self.gt, self.judge_llm, self.director.rng, self.lang)
         self.log.dev_log("deeds", deeds=self.deeds)
         self.base_prompt = {
             c["character"]: build_npc_system_prompt(
                 self.case, c, self.gt,
-                deeds=self.deeds.get(c["character"]))
+                deeds=self.deeds.get(c["character"]), lang=self.lang)
             for c in self.case["characters"]
         }
         self.extras: dict[str, list[str]] = {n: [] for n in self.names}
@@ -94,14 +125,18 @@ class Game:
         self.evidence: list[dict] = []   # {name, found_text}
         self.searched: set[str] = set()
         self.cur_act: int = 0            # set by play() for log context
-        self.log.conv("session_start", mode=self.log.mode,
+        # Reverse map: any accepted token -> canonical command verb.
+        self._alias = {tok: canon
+                       for canon, toks in self.L["commands"].items()
+                       for tok in toks}
+        self.log.conv("session_start", mode=self.log.mode, lang=self.lang,
                       title=self.case["scenario"]["title"], seed=seed)
 
     # ---- director plumbing -------------------------------------------
     def _select_culprit(self) -> tuple[str, list[str]]:
         """Selector handed to the director: the judge LLM picks who and why."""
         sel = judge_select_culprit(
-            self.case, self.judge_llm, self.director.rng)
+            self.case, self.judge_llm, self.director.rng, self.lang)
         self.log.dev_log("culprit_selection", **sel)
         return sel["culprit"], sel["flaws"]
 
@@ -118,13 +153,16 @@ class Game:
                             if m["role"] == "assistant"],
                 history=list(self.histories[n]))
 
+    # ---- command parsing ---------------------------------------------
+    def canon(self, verb: str) -> str:
+        """Map a typed verb (en or zh alias) to its canonical command."""
+        return self._alias.get(verb.lower(), verb.lower())
+
     # ---- NPC plumbing ------------------------------------------------
     def system_for(self, name: str) -> str:
         sysp = self.base_prompt[name]
         if self.extras[name]:
-            sysp += ("\n\nNEW MEMORIES (things you did, found out, or "
-                     "heard since the night began - treat as true "
-                     "unless marked hearsay):\n" +
+            sysp += ("\n\n" + self.ui["new_memories"] + "\n" +
                      "\n".join(f"  - {x}" for x in self.extras[name]))
         return sysp
 
@@ -132,7 +170,7 @@ class Game:
         self.histories[name].append({"role": "user", "content": user_text})
         reply = self.npc_llm.chat(self.system_for(name),
                                   self.histories[name])
-        hint = referee_check(reply, name, self.gt)
+        hint = referee_check(reply, name, self.gt, self.lang)
         if hint:
             self.histories[name].append(
                 {"role": "assistant", "content": reply})
@@ -156,15 +194,16 @@ class Game:
     # ---- shared commands ---------------------------------------------
     def show_cast(self) -> None:
         for i, c in enumerate(self.case["characters"], 1):
-            say(f"{i}. {c['character']} - {c['role']}")
+            say(self.ui["cast_line"].format(i=i, name=c["character"],
+                                            role=c["role"]))
 
     def show_evidence(self) -> None:
         if not self.evidence:
-            say("[Your evidence pouch is empty.]")
+            say(self.ui["evidence_empty"])
             return
-        say("EVIDENCE COLLECTED:")
+        say(self.ui["evidence_header"])
         for e in self.evidence:
-            say(f"* {e['name']}", indent="  ")
+            say(self.ui["evidence_item"].format(name=e["name"]), indent="  ")
             say(e["found_text"], indent="      ")
 
     def show_notes(self) -> None:
@@ -174,64 +213,63 @@ class Game:
                      if m["role"] == "assistant"]
             if turns:
                 any_notes = True
-                say(f"--- {n} ({len(turns)} statements) ---")
-                for t in turns:
-                    say(t["content"], indent="  ")
+                say(self.ui["notes_header"].format(n=n, k=len(turns)))
+                for t_ in turns:
+                    say(t_["content"], indent="  ")
         if not any_notes:
-            say("[Nobody has told you anything yet.]")
+            say(self.ui["notes_empty"])
 
     # ---- SEARCH phase --------------------------------------------------
     def run_search(self, act: dict, minutes: int) -> None:
         spots = act["spots"]
         cost = int(self.costs.get("search", 2))
-        say(f"[SEARCH PHASE - {minutes} minutes. 'look' to survey, "
-            f"'search <spot>' ({cost} min each), 'evidence', 'next' "
-            "to stop early.]")
+        say(self.ui["search_header"].format(m=minutes, cost=cost))
         while minutes > 0:
-            cmd = ask(f"\n(search, {minutes} min) > ")
+            cmd = ask(self.ui["search_prompt"].format(m=minutes))
             if not cmd:
                 continue
             verb, _, rest = cmd.partition(" ")
-            verb = verb.lower()
-            if verb in ("next", "skip"):
+            verb = self.canon(verb)
+            if verb == "next":
                 return
             if verb == "look":
                 for s in spots:
-                    tag = " (searched)" if s["id"] in self.searched else ""
-                    say(f"- {s['name']}{tag}")
+                    tag = self.ui["searched_tag"] if s["id"] in self.searched else ""
+                    say(self.ui["spot_line"].format(name=s["name"], tag=tag))
                 continue
             if verb == "evidence":
                 self.show_evidence()
                 continue
             if verb == "help":
-                say("look | search <spot> | evidence | next")
+                say(self.ui["search_help"])
                 continue
             if verb == "search":
                 target = None
                 for s in spots:
-                    if rest.lower() in s["id"] or \
-                       rest.lower() in s["name"].lower():
+                    if rest and (rest.lower() in s["id"] or
+                                 rest.lower() in s["name"].lower()):
                         target = s
                         break
                 if not target or not rest:
-                    say("Search where? 'look' lists the spots.")
+                    say(self.ui["search_where"])
                     continue
                 if minutes < cost:
-                    say("[No time left to search properly.]")
+                    say(self.ui["no_time_search"])
                     return
                 minutes -= cost
                 if target["id"] in self.searched:
-                    say(f"[You already went over {target['name']}.]")
+                    say(self.ui["already_searched"].format(name=target["name"]))
                     continue
                 self.searched.add(target["id"])
                 found = [i for i in target.get("items", [])
                          if item_present(i, self.gt)]
                 if not found:
-                    say(target.get("empty_text",
-                                   "Nothing of interest."), indent="  ")
+                    say(target.get("empty_text", self.ui["nothing"]),
+                        indent="  ")
                 else:
                     for item in found:
-                        say(f"FOUND: {item['name']}", indent="  ")
+                        say(self.ui["found"].format(name=item["name"]),
+                            indent="  ")
                         say(item["found_text"], indent="    ")
                         self.evidence.append(
                             {"name": item["name"],
@@ -239,24 +277,21 @@ class Game:
                 self.log.conv("search", act=self.cur_act, spot=target["name"],
                               found=[i["name"] for i in found])
                 continue
-            say("Unknown command. Try 'help'.")
-        say("[Time's up - Elena is calling everyone together.]")
+            say(self.ui["unknown_cmd"])
+        say(self.ui["time_up_search"])
 
     # ---- TALK phase ----------------------------------------------------
     def run_talk(self, minutes: int) -> None:
         qcost = int(self.costs.get("question", 1))
         scost = int(self.costs.get("show", 1))
-        say(f"[TALK PHASE - {minutes} minutes. 'cast', 'talk <name>', "
-            "'evidence', 'notes', 'next'. In conversation: ask "
-            f"anything ({qcost} min), 'show <item>' ({scost} min), "
-            "'back'.]")
+        say(self.ui["talk_header"].format(m=minutes, q=qcost, s=scost))
         while minutes > 0:
-            cmd = ask(f"\n(talk, {minutes} min) > ")
+            cmd = ask(self.ui["talk_prompt"].format(m=minutes))
             if not cmd:
                 continue
             verb, _, rest = cmd.partition(" ")
-            verb = verb.lower()
-            if verb in ("next", "skip"):
+            verb = self.canon(verb)
+            if verb == "next":
                 return
             if verb == "cast":
                 self.show_cast()
@@ -268,39 +303,38 @@ class Game:
                 self.show_notes()
                 continue
             if verb == "help":
-                say("cast | talk <name> | evidence | notes | next")
+                say(self.ui["talk_help"])
                 continue
             if verb == "talk":
                 name = self.resolve_name(rest)
                 if not name:
-                    say("Talk to whom? 'cast' lists them.")
+                    say(self.ui["talk_to_whom"])
                     continue
-                say(f"[You corner {name}.]")
+                say(self.ui["corner"].format(name=name))
                 while minutes > 0:
-                    q = ask(f"You -> {name} ({minutes} min): ")
+                    q = ask(self.ui["you_to"].format(name=name, m=minutes))
                     if not q:
                         continue
-                    low = q.lower()
-                    if low in ("back", "leave"):
+                    qverb, _, qrest = q.partition(" ")
+                    qcanon = self.canon(qverb)
+                    if qcanon == "back" and not qrest.strip():
                         break
-                    if low.startswith("show "):
-                        token = q[5:].strip().lower()
+                    if qcanon == "show" and qrest.strip():
+                        token = qrest.strip().lower()
                         item = next(
                             (e for e in self.evidence
                              if token in e["name"].lower()), None)
                         if not item:
-                            say("[You don't have that. 'evidence' "
-                                "lists what you carry.]")
+                            say(self.ui["no_item"])
                             continue
                         minutes -= scost
-                        msg = ("[The journalist places evidence in "
-                               f"front of you: {item['name']}. "
-                               f"{item['found_text']}]")
+                        msg = self.ui["evidence_present"].format(
+                            name=item["name"], text=item["found_text"])
                         try:
                             reply = self.npc_reply(name, msg)
                             say(f"{name}: {reply}", indent="  ")
                         except Exception as e:
-                            reply = f"[provider error: {e}]"
+                            reply = self.ui["provider_error"].format(e=e)
                             say(reply)
                         self.log.conv("show_evidence", act=self.cur_act,
                                       name=name, item=item["name"],
@@ -312,44 +346,41 @@ class Game:
                         reply = self.npc_reply(name, q)
                         say(f"{name}: {reply}", indent="  ")
                     except Exception as e:
-                        reply = f"[provider error: {e}]"
+                        reply = self.ui["provider_error"].format(e=e)
                         say(reply)
                     self.log.conv("question", act=self.cur_act, name=name,
                                   question=q, reply=reply, minutes_left=minutes)
                 if minutes <= 0:
                     break
                 continue
-            say("Unknown command. Try 'help'.")
-        say("[Time's up.]")
+            say(self.ui["unknown_cmd"])
+        say(self.ui["time_up"])
 
     # ---- act boundary ----------------------------------------------------
     def boundary(self, act_no: int) -> None:
-        say("\n[Between acts, the suspects gather and murmur. "
-            "Notes are compared. Stories adjust.]")
+        say(self.ui["between_acts"])
         gossip = deal_boundary_gossip(
             self.case, self.gt, act_no, self.deeds,
-            self.questions_log, self.judge_llm, self.director.rng)
+            self.questions_log, self.judge_llm, self.director.rng, self.lang)
+        prefix = self.ui["hearsay_prefix"]
         for n, lines in gossip.items():
-            self.extras[n].extend(f"(hearsay) {s}" for s in lines)
+            self.extras[n].extend(f"{prefix}{s}" for s in lines)
         self.log.dev_log("boundary_gossip", after_act=act_no, gossip=gossip)
 
     # ---- forced conclusion ----------------------------------------------
     def conclusion(self) -> None:
-        say("\n" + "=" * WRAP)
-        say("Headlights in the courtyard. The police are walking up "
-            "the drive. There is no more time: you must name the "
-            "truth NOW. One accusation. No second chance.")
+        print("\n" + "=" * WRAP)
+        say(self.ui["concl_intro"])
         self.show_cast()
         accused = ""
         while not accused:
-            accused = ask("\nWHO is responsible for Diana's death? "
-                          "(name, or 'accident'): ")
-        reasoning = ask("WHY did they do it? Name the real motive: ")
-        how = ask("HOW was it done? (optional, Enter to skip): ")
+            accused = ask(self.ui["ask_who"].format(v=self.director.victim))
+        reasoning = ask(self.ui["ask_why"])
+        how = ask(self.ui["ask_how"])
         self.log.conv("accusation", accused=accused, why=reasoning, how=how)
-        say("\n[The room goes quiet as you speak...]")
+        say(self.ui["room_quiet"])
         verdict = judge_accusation(self.case, self.gt, accused,
-                                   reasoning, how, self.judge_llm)
+                                   reasoning, how, self.judge_llm, self.lang)
         print("=" * WRAP)
         say(verdict)
         print("=" * WRAP)
@@ -360,7 +391,7 @@ class Game:
     def play(self) -> None:
         sc = self.case["scenario"]
         print("=" * WRAP)
-        say(f"SHIFTING TRUTH - {sc['title']}")
+        say(self.ui["title"].format(title=sc["title"]))
         print("=" * WRAP)
         say(sc["setting"])
         print()
@@ -370,7 +401,7 @@ class Game:
         for idx, act in enumerate(acts, 1):
             self.cur_act = act["act"]
             print("\n" + "-" * WRAP)
-            say(f"ACT {act['act']}: {act['title']}")
+            say(self.ui["act_header"].format(act=act["act"], title=act["title"]))
             print("-" * WRAP)
             say(act.get("scene_intro", ""))
             for phase in act["phases"]:
@@ -393,8 +424,11 @@ def main() -> None:
                     default=None,
                     help="developer also logs the judge's choice, ground "
                          "truth, and NPC memory per stage (overrides config)")
+    ap.add_argument("--lang", choices=["en", "zh"], default=None,
+                    help="play language (overrides config; prompts if unset)")
     args = ap.parse_args()
-    Game(args.config, args.seed, mode_override=args.mode).play()
+    Game(args.config, args.seed, mode_override=args.mode,
+         lang_override=args.lang).play()
 
 
 if __name__ == "__main__":

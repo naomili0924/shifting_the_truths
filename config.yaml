@@ -23,7 +23,13 @@ agents:
     # Give it the strongest model you can afford.
 
 game:
-  case: case.yaml
+  # Language: en | zh. Override with --lang; if left null the game asks
+  # at startup. English stays the default; each language has its own case.
+  lang: null
+  cases:
+    en: case.yaml
+    zh: case_zh.yaml
+  case: case.yaml     # fallback if no per-language case is set
   seed: null          # seeds method/clue rolls; the culprit is the
                       # judge LLM's choice, so see the developer log to
                       # reproduce a specific game's hidden truth
