@@ -25,11 +25,12 @@ import textwrap
 import yaml
 
 from providers import provider_from_config
+from gamelog import GameLog
 from engine import (
     load_case, Director, GroundTruth, build_npc_system_prompt,
     referee_check, judge_accusation, item_present,
     judge_generate_deeds, deal_boundary_gossip,
-    judge_select_culprit, record_ground_truth,
+    judge_select_culprit,
 )
 
 WRAP = 76
@@ -50,27 +51,37 @@ def ask(prompt: str) -> str:
 
 
 class Game:
-    def __init__(self, config_path: str, seed_override: int | None):
+    def __init__(self, config_path: str, seed_override: int | None,
+                 mode_override: str | None = None):
         with open(config_path, "r", encoding="utf-8") as f:
             self.cfg = yaml.safe_load(f)
         self.costs = self.cfg.get("costs", {})
         self.npc_llm = provider_from_config(self.cfg["agents"]["npc"])
         self.judge_llm = provider_from_config(self.cfg["agents"]["judge"])
 
+        # Launch mode: production (conversation only) or developer (also
+        # logs the judge's choice, ground truth, and NPC memory per stage).
+        mode = mode_override or self.cfg["game"].get("mode", "production")
+        self.log = GameLog(mode, self.cfg["game"].get("log_dir", "logs"))
+
         self.case = load_case(self.cfg["game"].get("case", "case.yaml"))
         seed = seed_override if seed_override is not None \
             else self.cfg["game"].get("seed")
-        # Developer debug log for the judge's hidden choices (null to disable).
-        self.debug_path = self.cfg["game"].get("debug_log")
         self.director = Director(self.case, seed=seed)
         # The judge LLM picks the culprit + motive; deterministic code
         # still rolls method, timeline, clues and the accident special.
         self.gt: GroundTruth = self.director.roll(selector=self._select_culprit)
-        record_ground_truth(self.debug_path, self.gt)
+        self.log.dev_log(
+            "ground_truth", is_murder=self.gt.is_murder,
+            culprit=self.gt.culprit, flaws=self.gt.active_flaws,
+            method=self.gt.method["id"] if self.gt.method else None,
+            motive=self.gt.motive, secret_timeline=self.gt.secret_timeline,
+            distributed_clues=self.gt.distributed_clues)
 
         self.names = [c["character"] for c in self.case["characters"]]
         self.deeds = judge_generate_deeds(
             self.case, self.gt, self.judge_llm, self.director.rng)
+        self.log.dev_log("deeds", deeds=self.deeds)
         self.base_prompt = {
             c["character"]: build_npc_system_prompt(
                 self.case, c, self.gt,
@@ -82,13 +93,30 @@ class Game:
         self.questions_log: dict[str, list[str]] = {n: [] for n in self.names}
         self.evidence: list[dict] = []   # {name, found_text}
         self.searched: set[str] = set()
+        self.cur_act: int = 0            # set by play() for log context
+        self.log.conv("session_start", mode=self.log.mode,
+                      title=self.case["scenario"]["title"], seed=seed)
 
     # ---- director plumbing -------------------------------------------
     def _select_culprit(self) -> tuple[str, list[str]]:
         """Selector handed to the director: the judge LLM picks who and why."""
         sel = judge_select_culprit(
-            self.case, self.judge_llm, self.director.rng, self.debug_path)
+            self.case, self.judge_llm, self.director.rng)
+        self.log.dev_log("culprit_selection", **sel)
         return sel["culprit"], sel["flaws"]
+
+    def log_npc_memory(self, stage: str) -> None:
+        """Developer mode: snapshot every NPC's memory at a stage boundary."""
+        if not self.log.dev:
+            return
+        for n in self.names:
+            self.log.dev_log(
+                "npc_memory", stage=stage, name=n,
+                system_prompt=self.system_for(n),
+                hearsay=list(self.extras[n]),
+                statements=[m for m in self.histories[n]
+                            if m["role"] == "assistant"],
+                history=list(self.histories[n]))
 
     # ---- NPC plumbing ------------------------------------------------
     def system_for(self, name: str) -> str:
@@ -208,6 +236,8 @@ class Game:
                         self.evidence.append(
                             {"name": item["name"],
                              "found_text": item["found_text"]})
+                self.log.conv("search", act=self.cur_act, spot=target["name"],
+                              found=[i["name"] for i in found])
                 continue
             say("Unknown command. Try 'help'.")
         say("[Time's up - Elena is calling everyone together.]")
@@ -270,7 +300,11 @@ class Game:
                             reply = self.npc_reply(name, msg)
                             say(f"{name}: {reply}", indent="  ")
                         except Exception as e:
-                            say(f"[provider error: {e}]")
+                            reply = f"[provider error: {e}]"
+                            say(reply)
+                        self.log.conv("show_evidence", act=self.cur_act,
+                                      name=name, item=item["name"],
+                                      reply=reply, minutes_left=minutes)
                         continue
                     minutes -= qcost
                     self.questions_log[name].append(q)
@@ -278,7 +312,10 @@ class Game:
                         reply = self.npc_reply(name, q)
                         say(f"{name}: {reply}", indent="  ")
                     except Exception as e:
-                        say(f"[provider error: {e}]")
+                        reply = f"[provider error: {e}]"
+                        say(reply)
+                    self.log.conv("question", act=self.cur_act, name=name,
+                                  question=q, reply=reply, minutes_left=minutes)
                 if minutes <= 0:
                     break
                 continue
@@ -294,6 +331,7 @@ class Game:
             self.questions_log, self.judge_llm, self.director.rng)
         for n, lines in gossip.items():
             self.extras[n].extend(f"(hearsay) {s}" for s in lines)
+        self.log.dev_log("boundary_gossip", after_act=act_no, gossip=gossip)
 
     # ---- forced conclusion ----------------------------------------------
     def conclusion(self) -> None:
@@ -308,12 +346,15 @@ class Game:
                           "(name, or 'accident'): ")
         reasoning = ask("WHY did they do it? Name the real motive: ")
         how = ask("HOW was it done? (optional, Enter to skip): ")
+        self.log.conv("accusation", accused=accused, why=reasoning, how=how)
         say("\n[The room goes quiet as you speak...]")
         verdict = judge_accusation(self.case, self.gt, accused,
                                    reasoning, how, self.judge_llm)
         print("=" * WRAP)
         say(verdict)
         print("=" * WRAP)
+        self.log.conv("verdict", accused=accused, verdict=verdict)
+        self.log_npc_memory("final")
 
     # ---- the night ---------------------------------------------------------
     def play(self) -> None:
@@ -325,7 +366,9 @@ class Game:
         print()
         say(sc["the_accident"])
         acts = self.case["acts"]
+        self.log_npc_memory("game_start")
         for idx, act in enumerate(acts, 1):
+            self.cur_act = act["act"]
             print("\n" + "-" * WRAP)
             say(f"ACT {act['act']}: {act['title']}")
             print("-" * WRAP)
@@ -336,6 +379,7 @@ class Game:
                     self.run_search(act, int(phase["time"]))
                 else:
                     self.run_talk(int(phase["time"]))
+            self.log_npc_memory(f"act{act['act']}_end")
             if idx < len(acts):
                 self.boundary(act["act"])
         self.conclusion()
@@ -345,8 +389,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Shifting Truth")
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--mode", choices=["developer", "production"],
+                    default=None,
+                    help="developer also logs the judge's choice, ground "
+                         "truth, and NPC memory per stage (overrides config)")
     args = ap.parse_args()
-    Game(args.config, args.seed).play()
+    Game(args.config, args.seed, mode_override=args.mode).play()
 
 
 if __name__ == "__main__":

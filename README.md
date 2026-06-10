@@ -92,17 +92,34 @@ before use; invalid output falls back, so a flaky model can never break
 a running game.
 
 Because an LLM now makes this call, `--seed` alone no longer reproduces
-the culprit — it still seeds method, clue and accident rolls. To see or
-reproduce a specific game's hidden truth, read the developer debug log
-(`game.debug_log` in config.yaml, default `judge_debug.jsonl`): one JSON
-line per game records the judge's culprit + motive pick (and its
-reasoning) plus the fully resolved ground truth. It's written to disk
-only, never shown to the player.
+the culprit — it still seeds method, clue and accident rolls. To see a
+specific game's hidden truth, run in developer mode (below).
+
+## Launch modes (logging)
+
+Two modes, set by `game.mode` in config.yaml or `--mode` on the CLI.
+Both write JSON Lines to `<log_dir>/<session-timestamp-pid>/`; nothing
+is ever printed to the player's screen.
+
+```bash
+python main.py                      # production (config default)
+python main.py --mode developer     # full spoiler layer for debugging
+```
+
+| File | production | developer | Contents |
+|------|:---------:|:---------:|----------|
+| `conversation.jsonl` | ✅ | ✅ | every question & reply, evidence shown, searches + finds, the accusation and verdict |
+| `developer.jsonl`    | — | ✅ | the judge's culprit/motive **choice** (+ reasoning, source), the resolved **ground truth**, the generated **deeds**, **boundary gossip**, and a snapshot of **every NPC's memory at each stage** (full system prompt, accumulated hearsay, statements so far) |
+
+Developer mode is how you "track an NPC's memory in each stage" and see
+exactly what the judge decided. Production mode keeps a clean transcript
+of play with no spoilers. The `logs/` directory is gitignored.
 
 ## Files
 
-- `config.yaml` — agent brains + time costs
+- `config.yaml` — agent brains, time costs, launch mode
 - `case.yaml` — the authored case: cast, flaws, methods, acts, items
 - `engine.py` — director roll, judge jobs, prompts, referee, verdict
 - `providers.py` — LLMProvider interface: Anthropic / ONNX / mock
+- `gamelog.py` — session logging (production / developer modes)
 - `main.py` — the act/phase game loop

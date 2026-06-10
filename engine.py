@@ -95,32 +95,6 @@ def culprit_options(case: dict) -> list[tuple]:
     return opts
 
 
-def _append_debug(path: str | None, record: dict) -> None:
-    """Append one JSON line to the developer debug log (best effort)."""
-    if not path:
-        return
-    import datetime
-    rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
-           **record}
-    try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
-def record_ground_truth(path: str | None, gt: "GroundTruth") -> None:
-    """Log the fully resolved ground truth (covers the accident roll too)."""
-    _append_debug(path, {
-        "event": "ground_truth",
-        "is_murder": gt.is_murder,
-        "culprit": gt.culprit,
-        "flaws": gt.active_flaws,
-        "method": gt.method["id"] if gt.method else None,
-        "motive": gt.motive,
-    })
-
-
 class Director:
     """Rolls one playthrough from the authored case."""
 
@@ -300,10 +274,10 @@ def _match_name(token: str, names: list[str]) -> str | None:
 
 
 def judge_select_culprit(case: dict, judge: LLMProvider,
-                         rng: random.Random,
-                         debug_path: str | None = None) -> dict:
+                         rng: random.Random) -> dict:
     """Ask the judge to pick (culprit, flaws). Returns a dict with
-    culprit/flaws plus debug fields; always valid even on failure."""
+    culprit/flaws plus debug fields (source, rationale, motive_seeds,
+    triggers); always valid even on failure. Logging is the caller's job."""
     opts = culprit_options(case)
     names = [c["character"] for c in case["characters"]]
     flaw_text = {c["character"]: {f["id"]: f for f in c["flaws"]}
@@ -347,13 +321,12 @@ def judge_select_culprit(case: dict, judge: LLMProvider,
         result = {"culprit": cul, "flaws": flaws, "source": "fallback",
                   "rationale": "(judge unavailable — weighted code pick)"}
 
-    # Attach the authored motive material for the debug log.
+    # Attach the authored motive material for the developer log.
     by_id = flaw_text[result["culprit"]]
     result["motive_seeds"] = [by_id[f]["motive_seed"]
                               for f in result["flaws"] if f in by_id]
     result["triggers"] = [by_id[f]["trigger_vs_victim"]
                           for f in result["flaws"] if f in by_id]
-    _append_debug(debug_path, {"event": "culprit_selection", **result})
     return result
 
 
