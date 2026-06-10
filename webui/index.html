@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shifting Truth</title>
+<style>
+  :root{
+    --bg:#11131a; --panel:#1a1d27; --panel2:#222634; --ink:#e8e6df;
+    --muted:#9aa0b0; --line:#2e3344; --accent:#c9a24b; --accent2:#8a5a8a;
+    --you:#264a6b; --npc:#3a2f2a; --danger:#b4654a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#1c2030,#0d0e14);
+       color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+  h1,h2,h3{font-family:Georgia,"Songti SC",serif;font-weight:600;margin:.2em 0}
+  button{font:inherit;cursor:pointer;border:none;border-radius:8px;
+         background:var(--panel2);color:var(--ink);padding:.5em .9em;transition:.15s}
+  button:hover{background:#2c3142}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .btn-primary{background:var(--accent);color:#221c08;font-weight:600}
+  .btn-primary:hover{background:#d8b25c}
+  .muted{color:var(--muted)}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px}
+
+  /* ---- start screen ---- */
+  #start{min-height:100vh;display:flex;flex-direction:column;align-items:center;
+         justify-content:center;text-align:center;gap:18px;padding:24px}
+  #start h1{font-size:46px;letter-spacing:1px;margin:0}
+  #start .tag{color:var(--muted);max-width:30em}
+  .langrow{display:flex;gap:10px}
+  .langrow button{padding:.6em 1.4em;border:1px solid var(--line)}
+  .langrow button.sel{border-color:var(--accent);background:#2a2616}
+
+  /* ---- topbar ---- */
+  .topbar{position:sticky;top:0;z-index:5;background:#10121a;border-bottom:1px solid var(--line);
+          display:flex;align-items:center;gap:14px;padding:10px 16px}
+  .topbar .title{font-family:Georgia,serif;font-size:18px}
+  .phasechip{padding:.2em .7em;border-radius:999px;border:1px solid var(--line);
+             font-size:13px;letter-spacing:.5px}
+  .phasechip.search{color:#7fb0e0;border-color:#2c476b}
+  .phasechip.talk{color:#d6a3d6;border-color:#5a3a5a}
+  .grow{flex:1}
+  .timechip{font-variant-numeric:tabular-nums;background:var(--panel2);padding:.3em .7em;border-radius:8px}
+  .timechip b{color:var(--accent)}
+
+  .layout{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}
+  @media(max-width:880px){.layout{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .panel h3{margin-top:0;color:var(--accent);font-size:14px;letter-spacing:.6px;text-transform:uppercase}
+
+  .scene{margin-bottom:14px}
+  .scene p{margin:.4em 0;color:#cfccc4}
+  details summary{cursor:pointer;color:var(--muted)}
+
+  /* ---- grids ---- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:10px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;
+        cursor:pointer;transition:.15s;text-align:left}
+  .card:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .card.done{opacity:.55;cursor:default}
+  .card.done:hover{transform:none;border-color:var(--line)}
+  .card .nm{font-weight:600}
+  .card .tag{font-size:12px;color:var(--muted)}
+  .card .find{margin-top:8px;font-size:13px;color:#d9c79a;border-top:1px dashed var(--line);padding-top:6px}
+
+  /* ---- suspects ---- */
+  .suspects{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin-top:10px}
+  .suspect{display:flex;flex-direction:column;align-items:center;gap:8px;background:var(--panel2);
+           border:1px solid var(--line);border-radius:12px;padding:16px 10px;cursor:pointer;transition:.15s}
+  .suspect:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .avatar{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+          font-size:30px;position:relative;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  .avatar .ini{position:absolute;bottom:-4px;right:-4px;width:22px;height:22px;border-radius:50%;
+               background:#0d0e14;border:1px solid var(--line);font-size:12px;display:flex;
+               align-items:center;justify-content:center;color:var(--ink)}
+  .suspect .nm{font-weight:600;text-align:center}
+  .suspect .role{font-size:12px;color:var(--muted);text-align:center}
+  .suspect .badge{font-size:11px;color:var(--accent)}
+
+  /* ---- conversation ---- */
+  .convo{display:flex;flex-direction:column;height:min(60vh,520px)}
+  .convo .head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .convo .head .avatar{width:48px;height:48px;font-size:24px}
+  .log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px}
+  .msg{max-width:80%;padding:9px 12px;border-radius:12px;white-space:pre-wrap}
+  .msg.you{align-self:flex-end;background:var(--you);border-bottom-right-radius:3px}
+  .msg.npc{align-self:flex-start;background:var(--npc);border-bottom-left-radius:3px}
+  .msg.sys{align-self:center;color:var(--muted);font-style:italic;font-size:13px;background:none}
+  .composer{display:flex;gap:8px;margin-top:10px}
+  .composer input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+                  color:var(--ink);padding:.6em .8em}
+  .composer input:focus{outline:1px solid var(--accent)}
+  .showrow{display:flex;gap:8px;margin-top:8px}
+  .showrow select{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+                  border-radius:8px;padding:.4em}
+
+  /* ---- evidence/notes ---- */
+  .ev{border-bottom:1px solid var(--line);padding:8px 0}
+  .ev:last-child{border:none}
+  .ev .nm{font-weight:600;color:#d9c79a}
+  .ev .txt{font-size:13px;color:#bdbbb4}
+
+  /* ---- accuse ---- */
+  .accuse label{display:block;margin:14px 0 4px;color:var(--accent);font-size:14px}
+  .accuse select,.accuse textarea,.accuse input{width:100%;background:var(--panel2);
+       border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:.6em .8em}
+  .accuse textarea{min-height:70px;resize:vertical}
+  .verdict{white-space:pre-wrap;font-size:15px;line-height:1.6}
+  .verdict .card{cursor:default}
+
+  /* ---- modal ---- */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;
+            justify-content:center;z-index:20}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:560px;
+         width:90%;padding:22px;max-height:80vh;overflow:auto}
+  .gossip-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .gossip-item:last-child{border:none}
+  .gossip-item .avatar{width:40px;height:40px;font-size:20px;flex:none}
+  .banner{background:#2a2616;border:1px solid #4a401f;color:#e8d9a0;border-radius:8px;
+          padding:8px 12px;font-size:13px;margin-bottom:12px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#2c3142;
+         border:1px solid var(--line);padding:.6em 1em;border-radius:8px;z-index:30;opacity:0;transition:.3s}
+  .toast.show{opacity:1}
+  .center{text-align:center}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--muted);
+        border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+const App = document.getElementById('app');
+let state = null, sid = null, lang = 'en', activeNpc = null, busy = false;
+
+function W(k){ return (state && state.web && state.web[k]) || k; }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function api(path, body){
+  const r = await fetch('/api/'+path, {
+    method:'POST', headers:{'Content-Type':'application/json','X-Session':sid||''},
+    body: JSON.stringify(body||{})
+  });
+  return r.json();
+}
+function toast(msg){
+  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2200);
+}
+function applyAction(res){
+  if(res.action && res.action.error && !res.action.ok){
+    const known = res.action.error;
+    if(typeof known==='string' && known.length>3 && !['not_search','not_talk','bad_name','bad_spot','empty','no_item','not_finished','no_session'].includes(known))
+      toast(known);
+  }
+}
+
+/* ---------- START SCREEN ---------- */
+function renderStart(){
+  document.documentElement.lang = lang;
+  App.innerHTML = `
+    <div id="start">
+      <h1>Shifting Truth · 流转的真相</h1>
+      <div class="tag">A murder mystery where every suspect is an LLM.<br>每个嫌疑人都是一个大模型的谋杀悬疑游戏。</div>
+      <div class="langrow">
+        <button data-l="en" class="${lang==='en'?'sel':''}">English</button>
+        <button data-l="zh" class="${lang==='zh'?'sel':''}">中文</button>
+      </div>
+      <button id="go" class="btn-primary" style="padding:.7em 2em;font-size:17px">
+        ${lang==='zh'?'步入此夜':'Enter the night'}
+      </button>
+      <div class="muted" style="font-size:13px">${lang==='zh'?'剧情每局重掷·搜证·盘问·一击定案':'Plot re-rolls each game · search · interrogate · one accusation'}</div>
+    </div>`;
+  App.querySelectorAll('[data-l]').forEach(b=>b.onclick=()=>{lang=b.dataset.l;renderStart();});
+  document.getElementById('go').onclick = startGame;
+}
+
+async function startGame(){
+  App.innerHTML = `<div id="start"><div class="spin"></div><div class="muted" style="margin-top:12px">${lang==='zh'?'正在布置今晚……':'Setting the stage…'}</div></div>`;
+  const s = await api('new', {lang});
+  sid = s.sid; state = s; activeNpc = null;
+  render();
+}
+
+/* ---------- MAIN RENDER ---------- */
+function render(){
+  if(!state){ renderStart(); return; }
+  document.documentElement.lang = state.lang;
+  const k = state.phase_kind;
+  let main = '';
+  if(k==='search') main = viewSearch();
+  else if(k==='talk') main = viewTalk();
+  else if(k==='accuse') main = viewAccuse();
+  else if(k==='over') main = viewOver();
+
+  const showSidebar = (k==='search'||k==='talk');
+  App.innerHTML = `
+    ${topbar(k)}
+    <div class="wrap">
+      ${state.mock ? `<div class="banner">${esc(W('mock_note'))}</div>`:''}
+      ${(k==='search'||k==='talk') ? sceneCard() : ''}
+      <div class="layout">
+        <div class="panel">${main}</div>
+        ${showSidebar ? `<div>${evidencePanel()}${notesPanel()}</div>` : ''}
+      </div>
+    </div>`;
+  wire(k);
+}
+
+function topbar(k){
+  const phaseName = k==='search'?W('search_phase'):k==='talk'?W('talk_phase'):'';
+  const cls = k==='search'?'search':k==='talk'?'talk':'';
+  const actLabel = state.act_num ?
+     (state.lang==='zh' ? `第 ${state.act_num} 幕` : `Act ${state.act_num}`) : '';
+  const timeHtml = (k==='search'||k==='talk') ?
+     `<div class="timechip">${esc(W('time_left'))} <b>${state.time_left}</b> ${esc(W('min'))}</div>
+      <button id="endphase">${esc(W('next_phase'))}</button>` : '';
+  return `<div class="topbar">
+      <div class="title">${esc(state.scenario.title)}</div>
+      ${phaseName?`<span class="phasechip ${cls}">${esc(actLabel)} · ${esc(phaseName)}</span>`:''}
+      <div class="grow"></div>
+      ${timeHtml}
+    </div>`;
+}
+
+function sceneCard(){
+  return `<details class="scene panel" ${ '' }>
+      <summary><b>${esc(W('scene'))}</b> — ${esc(state.act_title||'')}</summary>
+      <p>${esc(state.act_intro||'')}</p>
+      <p class="muted">${esc(state.scenario.the_accident)}</p>
+    </details>`;
+}
+
+/* ---------- SEARCH ---------- */
+function viewSearch(){
+  let cards = state.spots.map(s=>{
+    const found = (s.found&&s.found.length)
+      ? s.found.map(f=>`<div class="find"><b>${esc(W('found'))}</b> ${esc(f.name)} — ${esc(f.found_text)}</div>`).join('')
+      : (s.searched ? `<div class="find muted">${esc(W('found_nothing'))}</div>`:'');
+    return `<div class="card ${s.searched?'done':''}" data-spot="${esc(s.id)}">
+        <div class="nm">${esc(s.name)}</div>
+        <div class="tag">${s.searched?esc(W('searched')):''}</div>
+        ${found}
+      </div>`;
+  }).join('');
+  return `<h3>${esc(W('locations'))}</h3>
+     <div class="muted">${esc(W('search_hint'))}</div>
+     <div class="grid">${cards}</div>`;
+}
+
+/* ---------- TALK ---------- */
+function viewTalk(){
+  if(activeNpc){
+    const c = state.cast.find(x=>x.name===activeNpc);
+    return convo(c);
+  }
+  const cards = state.cast.map(c=>`
+     <div class="suspect" data-npc="${esc(c.name)}">
+        ${avatar(c.avatar,52)}
+        <div class="nm">${esc(c.name)}</div>
+        <div class="role">${esc(c.role)}</div>
+        ${c.statements?`<div class="badge">${c.statements} ${state.lang==='zh'?'条发言':'replies'}</div>`:''}
+     </div>`).join('');
+  return `<h3>${esc(W('suspects'))}</h3>
+     <div class="muted">${esc(W('talk_hint'))}</div>
+     <div class="suspects">${cards}</div>`;
+}
+
+function convo(c){
+  const log = c.chat.length ? c.chat.map(m=>{
+     if(m.who==='you') return `<div class="msg you">${esc(m.text)}</div>`;
+     return `<div class="msg npc">${esc(m.text)}</div>`;
+  }).join('') : `<div class="msg sys">${state.lang==='zh'?'（开始你的盘问……）':'(begin your interrogation…)'}</div>`;
+  const evOpts = state.evidence.map(e=>`<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('');
+  const noTime = state.time_left < 1;
+  return `<div class="convo">
+      <div class="head">
+        <button id="back">${esc(W('back_to_suspects'))}</button>
+        ${avatar(c.avatar,40)}
+        <div><div class="nm">${esc(c.name)}</div><div class="role muted">${esc(c.role)}</div></div>
+      </div>
+      <div class="log" id="log">${log}</div>
+      <div class="composer">
+        <input id="q" placeholder="${esc(W('type_here'))}" ${noTime?'disabled':''} autocomplete="off">
+        <button id="send" class="btn-primary" ${noTime?'disabled':''}>${esc(W('send'))}</button>
+      </div>
+      ${state.evidence.length?`<div class="showrow">
+        <select id="evsel">${evOpts}</select>
+        <button id="showev" ${noTime?'disabled':''}>${esc(W('show_evidence'))}</button>
+      </div>`:''}
+      ${noTime?`<div class="muted" style="margin-top:8px">${esc(W('no_time'))}</div>`:''}
+    </div>`;
+}
+
+function avatar(a,size){
+  return `<div class="avatar" style="width:${size}px;height:${size}px;background:${a.color}">
+      <span>${a.emoji}</span><span class="ini">${esc(a.initial)}</span></div>`;
+}
+
+/* ---------- SIDEBAR ---------- */
+function evidencePanel(){
+  const items = state.evidence.length ? state.evidence.map(e=>
+     `<div class="ev"><div class="nm">${esc(e.name)}</div><div class="txt">${esc(e.found_text)}</div></div>`).join('')
+     : `<div class="muted">${esc(W('evidence_empty'))}</div>`;
+  return `<div class="panel" style="margin-bottom:14px"><h3>${esc(W('evidence'))}</h3>${items}</div>`;
+}
+function notesPanel(){
+  const any = state.cast.some(c=>c.statements>0);
+  const items = any ? state.cast.filter(c=>c.statements>0).map(c=>
+     `<div class="ev"><div class="nm">${esc(c.name)}</div><div class="txt">${c.statements} ${state.lang==='zh'?'条发言':'statements'}</div></div>`).join('')
+     : `<div class="muted">${esc(W('notes_empty'))}</div>`;
+  return `<div class="panel"><h3>${esc(W('notes'))}</h3>${items}</div>`;
+}
+
+/* ---------- ACCUSE ---------- */
+function viewAccuse(){
+  const accident = state.lang==='zh' ? '意外' : 'accident';
+  const opts = state.cast.map(c=>`<option value="${esc(c.name)}">${esc(c.name)} — ${esc(c.role)}</option>`).join('')
+     + `<option value="${accident}">${esc(accident)}</option>`;
+  return `<div class="accuse">
+      <h2>${esc(W('police_arrive'))}</h2>
+      <label>${esc(W('who'))}</label>
+      <select id="who">${opts}</select>
+      <label>${esc(W('why'))}</label>
+      <textarea id="why" placeholder="${esc(W('why_ph'))}"></textarea>
+      <label>${esc(W('how'))}</label>
+      <textarea id="how" placeholder="${esc(W('how_ph'))}"></textarea>
+      <div style="margin-top:16px"><button id="accuse" class="btn-primary" style="padding:.6em 1.6em">${esc(W('submit_accusation'))}</button></div>
+    </div>`;
+}
+
+/* ---------- OVER ---------- */
+function viewOver(){
+  return `<h2>${esc(W('verdict'))}</h2>
+     <div class="verdict">${esc(state.verdict)}</div>
+     <div style="margin-top:18px"><button id="again" class="btn-primary">${esc(W('play_again'))}</button></div>`;
+}
+
+/* ---------- WIRE EVENTS ---------- */
+function wire(k){
+  const ep = document.getElementById('endphase');
+  if(ep) ep.onclick = endPhase;
+
+  if(k==='search'){
+    App.querySelectorAll('[data-spot]').forEach(el=>{
+      if(el.classList.contains('done')) return;
+      el.onclick = ()=>doSearch(el.dataset.spot);
+    });
+  }
+  if(k==='talk'){
+    App.querySelectorAll('[data-npc]').forEach(el=> el.onclick=()=>{activeNpc=el.dataset.npc;render();});
+    const back=document.getElementById('back'); if(back) back.onclick=()=>{activeNpc=null;render();};
+    const send=document.getElementById('send'), q=document.getElementById('q');
+    if(send&&q){
+      const go=()=>{ const v=q.value.trim(); if(v) doTalk(v); };
+      send.onclick=go;
+      q.onkeydown=e=>{ if(e.key==='Enter') go(); };
+      q.focus();
+      const lg=document.getElementById('log'); if(lg) lg.scrollTop=lg.scrollHeight;
+    }
+    const se=document.getElementById('showev');
+    if(se) se.onclick=()=>doShow(document.getElementById('evsel').value);
+  }
+  if(k==='accuse'){
+    document.getElementById('accuse').onclick=doAccuse;
+  }
+  if(k==='over'){
+    document.getElementById('again').onclick=()=>{ state=null; startGame(); };
+  }
+}
+
+/* ---------- ACTIONS ---------- */
+async function doSearch(spot){
+  if(busy) return; busy=true;
+  const res = await api('search',{spot_id:spot}); busy=false;
+  state=res; applyAction(res); render();
+}
+async function doTalk(text){
+  if(busy) return; busy=true;
+  const log=document.getElementById('log');
+  if(log){ log.insertAdjacentHTML('beforeend',`<div class="msg you">${esc(text)}</div><div class="msg npc" id="pending"><span class="spin"></span> ${esc(W('thinking'))}</div>`); log.scrollTop=log.scrollHeight; }
+  const q=document.getElementById('q'); if(q){ q.value=''; }
+  const res = await api('talk',{name:activeNpc,text}); busy=false;
+  state=res; applyAction(res); render();
+}
+async function doShow(item){
+  if(busy||!item) return; busy=true;
+  const res = await api('show',{name:activeNpc,item}); busy=false;
+  state=res; applyAction(res); render();
+}
+async function endPhase(){
+  if(busy) return; busy=true;
+  const res = await api('next',{}); busy=false;
+  state=res; activeNpc=null;
+  if(res.gossip && res.gossip.length){ showGossip(res.gossip); }
+  else render();
+}
+async function doAccuse(){
+  if(busy) return;
+  const who=document.getElementById('who').value;
+  const why=document.getElementById('why').value;
+  const how=document.getElementById('how').value;
+  busy=true;
+  App.querySelector('#accuse').innerHTML='<span class="spin"></span>';
+  const res = await api('accuse',{who,why,how}); busy=false;
+  state=res; render();
+}
+
+function showGossip(g){
+  const items = g.map(x=>`<div class="gossip-item">${avatar(x.avatar,40)}
+      <div><div class="nm">${esc(x.name)}</div>
+      ${x.lines.map(l=>`<div class="txt muted">• ${esc(l)}</div>`).join('')}</div></div>`).join('');
+  const bg=document.createElement('div'); bg.className='modal-bg';
+  bg.innerHTML=`<div class="modal">
+      <h2>${esc(W('between_acts'))}</h2>
+      <div style="margin:12px 0">${items}</div>
+      <div class="center"><button id="cont" class="btn-primary">${esc(W('boundary_continue'))}</button></div>
+    </div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#cont').onclick=()=>{ bg.remove(); render(); };
+}
+
+/* ---------- BOOT ---------- */
+renderStart();
+</script>
+</body>
+</html>

@@ -17,6 +17,25 @@ python main.py --lang zh          # 用中文游玩
 No key / no network? Test the plumbing with mock agents: set
 `provider: mock` for both agents in config.yaml.
 
+## Play in the browser (web UI)
+
+A point-and-click version with suspect avatars, a chat box, clickable
+search locations, an evidence pouch, and the final accusation screen.
+
+```bash
+pip install flask                 # one-time (CLI doesn't need it)
+python web.py                     # serves http://127.0.0.1:17080
+```
+
+Open it locally, or reach a remote box via SSH forwarding
+(`ssh -L 8080:127.0.0.1:17080 ...`) or a Cloudflare quick tunnel
+(`cloudflared tunnel --url http://127.0.0.1:17080`). Pick the language
+on the start screen; click a **suspect** to interrogate them, type in
+the **chat box**, click a **location** to search it, then make your one
+accusation. It runs without an API key (suspects give canned replies via
+the mock provider) and uses real models the moment a key/local model is
+configured — `web.py` falls back to mock if a provider can't initialize.
+
 ## Language / 语言
 
 The player picks the language; English stays the default and is never
@@ -139,4 +158,6 @@ of play with no spoilers. The `logs/` directory is gitignored.
 - `engine.py` — director roll, judge jobs, prompts, referee, verdict
 - `providers.py` — LLMProvider interface: Anthropic / ONNX / mock
 - `gamelog.py` — session logging (production / developer modes)
-- `main.py` — the act/phase game loop
+- `main.py` — the act/phase game loop (CLI)
+- `web.py` — Flask backend for the browser UI (one session per browser)
+- `webui/index.html` — the single-page web client (avatars, chat, search)
