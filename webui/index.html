@@ -110,6 +110,11 @@
   .accuse textarea{min-height:70px;resize:vertical}
   .verdict{white-space:pre-wrap;font-size:15px;line-height:1.6}
   .verdict .card{cursor:default}
+  .stars{display:flex;gap:6px;font-size:30px;margin:8px 0}
+  .stars span{cursor:pointer;color:#555;transition:.1s}
+  .stars span.on{color:var(--accent)}
+  .rater textarea{width:100%;background:var(--panel2);border:1px solid var(--line);
+                  color:var(--ink);border-radius:8px;padding:.5em;min-height:60px;margin-top:8px}
 
   /* ---- modal ---- */
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;
@@ -356,7 +361,27 @@ function viewAccuse(){
 function viewOver(){
   return `<h2>${esc(W('verdict'))}</h2>
      <div class="verdict">${esc(state.verdict)}</div>
-     <div style="margin-top:18px"><button id="again" class="btn-primary">${esc(W('play_again'))}</button></div>`;
+     <div id="rate-area" style="margin-top:18px"><button id="rate-open">${esc(W('rate_plot'))}</button></div>
+     <div style="margin-top:12px"><button id="again" class="btn-primary">${esc(W('play_again'))}</button></div>`;
+}
+
+function openRater(ra){
+  let sel = 0;
+  ra.innerHTML = `<div class="panel rater" style="margin-top:8px">
+      <div>${esc(W('rate_q'))}</div>
+      <div class="stars" id="stars">${[1,2,3,4,5].map(i=>`<span data-s="${i}">★</span>`).join('')}</div>
+      <textarea id="rate-c" placeholder="${esc(W('rate_comment_ph'))}"></textarea>
+      <div style="margin-top:8px"><button id="rate-send" class="btn-primary">${esc(W('submit_rating'))}</button></div>
+    </div>`;
+  const stars = ra.querySelectorAll('#stars span');
+  const paint = n => stars.forEach((s,i)=>s.classList.toggle('on', i<n));
+  stars.forEach((s,i)=>{ s.onmouseenter=()=>paint(i+1); s.onclick=()=>{ sel=i+1; paint(sel); }; });
+  ra.querySelector('#stars').onmouseleave = ()=>paint(sel);
+  ra.querySelector('#rate-send').onclick = async ()=>{
+    const comment = ra.querySelector('#rate-c').value;
+    await api('rate', {stars: sel, comment});
+    ra.innerHTML = `<div class="panel" style="margin-top:8px">✓ ${esc(W('rate_thanks'))}</div>`;
+  };
 }
 
 /* ---------- WIRE EVENTS ---------- */
@@ -389,6 +414,9 @@ function wire(k){
   }
   if(k==='over'){
     document.getElementById('again').onclick=()=>{ state=null; startGame(); };
+    const ra=document.getElementById('rate-area');
+    const ob=document.getElementById('rate-open');
+    if(ob) ob.onclick=()=>openRater(ra);
   }
 }
 

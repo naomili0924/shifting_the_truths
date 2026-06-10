@@ -18,6 +18,8 @@ real model is configured.
 """
 
 from __future__ import annotations
+import datetime
+import json
 import os
 import uuid
 
@@ -222,6 +224,32 @@ class WebGame:
             self.case, self.gt, who, why, how, self.judge_llm, self.lang)
         return {"ok": True}
 
+    def rate(self, stars, comment):
+        """Record a player's plot rating with the hidden ground truth, so
+        the designer can see which generated plots land well."""
+        try:
+            stars = max(0, min(5, int(stars)))
+        except (TypeError, ValueError):
+            stars = 0
+        rec = {
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "lang": self.lang, "stars": stars,
+            "comment": str(comment or "")[:1000],
+            "is_murder": self.gt.is_murder, "culprit": self.gt.culprit,
+            "flaws": self.gt.active_flaws,
+            "method": self.gt.method["id"] if self.gt.method else None,
+            "motive": self.gt.motive,
+            "verdict_head": (self.verdict or "").splitlines()[0] if self.verdict else None,
+        }
+        path = os.path.join(HERE, "logs", "ratings.jsonl")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        return {"ok": True, "stars": stars}
+
     # ---- serialization ---------------------------------------------
     def to_dict(self):
         cur = self._cur()
@@ -363,6 +391,15 @@ def api_accuse():
     d = request.get_json(silent=True) or {}
     r = g.accuse(d.get("who", ""), d.get("why", ""), d.get("how", ""))
     return _respond(g, {"action": r})
+
+
+@app.post("/api/rate")
+def api_rate():
+    sid, g = _game()
+    if not g:
+        return jsonify({"error": "no_session"}), 404
+    d = request.get_json(silent=True) or {}
+    return jsonify(g.rate(d.get("stars"), d.get("comment", "")))
 
 
 if __name__ == "__main__":

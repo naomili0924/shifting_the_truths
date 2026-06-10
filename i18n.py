@@ -414,6 +414,11 @@ EN: dict = {
         "play_again": "Play again",
         "you": "You",
         "mock_note": "(No API key set — suspects give canned replies. Set ANTHROPIC_API_KEY or a local model for real dialogue.)",
+        "rate_plot": "★ Rate this plot",
+        "rate_q": "How was this mystery?",
+        "rate_comment_ph": "Anything you liked or didn't? (optional)",
+        "submit_rating": "Submit rating",
+        "rate_thanks": "Thanks for the feedback!",
     },
 }
 
@@ -746,6 +751,11 @@ ZH: dict = {
         "play_again": "再玩一局",
         "you": "你",
         "mock_note": "（未设置 API key——嫌疑人只会给出预设回复。设置 ANTHROPIC_API_KEY 或本地模型即可进行真实对话。）",
+        "rate_plot": "★ 给这个剧情评分",
+        "rate_q": "这个谜案怎么样？",
+        "rate_comment_ph": "有什么喜欢或不满意的？（可选）",
+        "submit_rating": "提交评分",
+        "rate_thanks": "感谢你的反馈！",
     },
 }
 
