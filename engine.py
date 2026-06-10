@@ -79,6 +79,48 @@ _ACCIDENT_CLUES = (
 )
 
 
+# Valid (culprit, flaws) combos authored in the plausibility matrix.
+# Returned as (culprit, flaws, strength, weight); shared by the code
+# fallback picker and the judge-selection prompt so both stay in sync.
+def culprit_options(case: dict) -> list[tuple]:
+    strengths = {"strong": 3, "medium": 2, "weak": 0}
+    opts = []
+    for entry in case["plausibility_matrix"]:
+        for roll in entry["valid_rolls"]:
+            strength = roll.get("strength", "weak")
+            w = strengths.get(strength, 0)
+            if w > 0:
+                opts.append((entry["culprit"], list(roll["flaws"]),
+                             strength, w))
+    return opts
+
+
+def _append_debug(path: str | None, record: dict) -> None:
+    """Append one JSON line to the developer debug log (best effort)."""
+    if not path:
+        return
+    import datetime
+    rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
+           **record}
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def record_ground_truth(path: str | None, gt: "GroundTruth") -> None:
+    """Log the fully resolved ground truth (covers the accident roll too)."""
+    _append_debug(path, {
+        "event": "ground_truth",
+        "is_murder": gt.is_murder,
+        "culprit": gt.culprit,
+        "flaws": gt.active_flaws,
+        "method": gt.method["id"] if gt.method else None,
+        "motive": gt.motive,
+    })
+
+
 class Director:
     """Rolls one playthrough from the authored case."""
 
@@ -87,12 +129,22 @@ class Director:
         self.rng = random.Random(seed)
 
     # -- public ---------------------------------------------------
-    def roll(self) -> GroundTruth:
+    def roll(self, selector=None) -> GroundTruth:
+        """Roll one playthrough.
+
+        `selector`, if given, is a no-arg callable returning
+        (culprit, flaws) for the murder branch — this is how the judge
+        LLM gets to choose. When omitted, a deterministic weighted code
+        pick is used (used by tests and as the offline fallback). The
+        accident special-roll is decided first, so the selector is only
+        consulted when the night is actually a murder.
+        """
         special = self.case.get("special_rolls", [])
         for sp in special:
             if sp["id"] == "true_accident" and self.rng.random() < float(sp.get("weight", 0)):
                 return self._roll_true_accident(sp)
-        return self._roll_murder()
+        culprit, flaws = selector() if selector else (None, None)
+        return self._roll_murder(culprit, flaws)
 
     # -- internals --------------------------------------------------
     def _char(self, name: str) -> dict:
@@ -107,18 +159,19 @@ class Director:
                 return fl
         raise KeyError(flaw_id)
 
-    def _roll_murder(self) -> GroundTruth:
-        # 1) Weighted pick of (culprit, flaw combo) from the matrix.
-        weights = {"strong": 3, "medium": 2, "weak": 0}
-        options = []
-        for entry in self.case["plausibility_matrix"]:
-            for roll in entry["valid_rolls"]:
-                w = weights.get(roll.get("strength", "weak"), 0)
-                if w > 0:
-                    options.append((entry["culprit"], roll["flaws"], w))
-        culprit, flaws, _ = self.rng.choices(
-            options, weights=[o[2] for o in options], k=1
-        )[0]
+    def _weighted_culprit(self) -> tuple[str, list[str]]:
+        """Deterministic weighted pick from the plausibility matrix."""
+        opts = culprit_options(self.case)
+        culprit, flaws, _strength, _w = self.rng.choices(
+            opts, weights=[o[3] for o in opts], k=1)[0]
+        return culprit, flaws
+
+    def _roll_murder(self, culprit: str | None = None,
+                     flaws: list[str] | None = None) -> GroundTruth:
+        # 1) The culprit + flaw combo. Supplied by the judge LLM via the
+        #    selector; falls back to a weighted code pick if absent.
+        if culprit is None or flaws is None:
+            culprit, flaws = self._weighted_culprit()
         char = self._char(culprit)
 
         # 2) Pick a method the culprit has access to.
@@ -220,6 +273,88 @@ class Director:
         for w, tmpl in zip(witnesses, templates):
             clue = tmpl.format(c=gt.culprit or "")
             gt.distributed_clues.setdefault(w, []).append(clue)
+
+
+# ----------------------------------------------------------------
+# Judge job #0: the judge LLM chooses the killer and their motive.
+#
+# The judge picks from the authored valid (culprit, flaws) combos, so
+# every choice stays coherent with method access and clue trails. Its
+# pick (and the reasoning) is written to a debug log for the developer.
+# On any failure (no API key, bad JSON, off-menu pick) it falls back to
+# the deterministic weighted code pick, so the game always starts.
+# Note: with an LLM making this call the culprit is no longer fully
+# reproducible from --seed; the debug log is how you reproduce/inspect.
+# ----------------------------------------------------------------
+def _match_name(token: str, names: list[str]) -> str | None:
+    token = (token or "").strip().lower()
+    if not token:
+        return None
+    for n in names:                       # exact full-name match
+        if token == n.lower():
+            return n
+    for n in names:                       # first-name or substring match
+        if n.lower().split()[0] == token or token in n.lower():
+            return n
+    return None
+
+
+def judge_select_culprit(case: dict, judge: LLMProvider,
+                         rng: random.Random,
+                         debug_path: str | None = None) -> dict:
+    """Ask the judge to pick (culprit, flaws). Returns a dict with
+    culprit/flaws plus debug fields; always valid even on failure."""
+    opts = culprit_options(case)
+    names = [c["character"] for c in case["characters"]]
+    flaw_text = {c["character"]: {f["id"]: f for f in c["flaws"]}
+                 for c in case["characters"]}
+
+    # Present the menu of valid combos with their authored motive seeds.
+    menu_lines = []
+    for i, (cul, flaws, strength, _w) in enumerate(opts, 1):
+        seeds = "; ".join(flaw_text[cul][f]["motive_seed"] for f in flaws)
+        menu_lines.append(
+            f'{i}. culprit="{cul}", flaws={flaws} ({strength}) — why: {seeds}')
+    system = (
+        "You are the omniscient director of a murder mystery. Choose who "
+        "killed Diana Voss tonight, and which of their character flaws "
+        "drove it, from the numbered menu of valid options. Pick the most "
+        "dramatically compelling option and vary your choice across games. "
+        "Respond with ONLY this JSON, nothing else:\n"
+        '{"culprit": "<exact name>", "flaws": ["<flaw_id>", ...], '
+        '"rationale": "<one sentence, for the designer\'s eyes only>"}'
+    )
+    user = "Valid options:\n" + "\n".join(menu_lines)
+
+    result = None
+    try:
+        raw = judge.chat(system, [{"role": "user", "content": user}],
+                         max_tokens=250)
+        data = _extract_json(raw)
+        assert data
+        cul = _match_name(str(data.get("culprit", "")), names)
+        flaws = [str(f).strip() for f in data.get("flaws", [])]
+        # Must match one authored valid combo exactly (keeps coherence).
+        match = next((o for o in opts
+                      if o[0] == cul and set(o[1]) == set(flaws)), None)
+        assert match
+        result = {"culprit": match[0], "flaws": match[1],
+                  "source": "llm",
+                  "rationale": str(data.get("rationale", ""))[:300]}
+    except Exception:
+        cul, flaws, _strength, _w = rng.choices(
+            opts, weights=[o[3] for o in opts], k=1)[0]
+        result = {"culprit": cul, "flaws": flaws, "source": "fallback",
+                  "rationale": "(judge unavailable — weighted code pick)"}
+
+    # Attach the authored motive material for the debug log.
+    by_id = flaw_text[result["culprit"]]
+    result["motive_seeds"] = [by_id[f]["motive_seed"]
+                              for f in result["flaws"] if f in by_id]
+    result["triggers"] = [by_id[f]["trigger_vs_victim"]
+                          for f in result["flaws"] if f in by_id]
+    _append_debug(debug_path, {"event": "culprit_selection", **result})
+    return result
 
 
 # ----------------------------------------------------------------

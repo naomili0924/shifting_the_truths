@@ -29,6 +29,7 @@ from engine import (
     load_case, Director, GroundTruth, build_npc_system_prompt,
     referee_check, judge_accusation, item_present,
     judge_generate_deeds, deal_boundary_gossip,
+    judge_select_culprit, record_ground_truth,
 )
 
 WRAP = 76
@@ -59,8 +60,13 @@ class Game:
         self.case = load_case(self.cfg["game"].get("case", "case.yaml"))
         seed = seed_override if seed_override is not None \
             else self.cfg["game"].get("seed")
+        # Developer debug log for the judge's hidden choices (null to disable).
+        self.debug_path = self.cfg["game"].get("debug_log")
         self.director = Director(self.case, seed=seed)
-        self.gt: GroundTruth = self.director.roll()
+        # The judge LLM picks the culprit + motive; deterministic code
+        # still rolls method, timeline, clues and the accident special.
+        self.gt: GroundTruth = self.director.roll(selector=self._select_culprit)
+        record_ground_truth(self.debug_path, self.gt)
 
         self.names = [c["character"] for c in self.case["characters"]]
         self.deeds = judge_generate_deeds(
@@ -76,6 +82,13 @@ class Game:
         self.questions_log: dict[str, list[str]] = {n: [] for n in self.names}
         self.evidence: list[dict] = []   # {name, found_text}
         self.searched: set[str] = set()
+
+    # ---- director plumbing -------------------------------------------
+    def _select_culprit(self) -> tuple[str, list[str]]:
+        """Selector handed to the director: the judge LLM picks who and why."""
+        sel = judge_select_culprit(
+            self.case, self.judge_llm, self.director.rng, self.debug_path)
+        return sel["culprit"], sel["flaws"]
 
     # ---- NPC plumbing ------------------------------------------------
     def system_for(self, name: str) -> str:

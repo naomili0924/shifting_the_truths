@@ -24,7 +24,11 @@ agents:
 
 game:
   case: case.yaml
-  seed: null          # set an integer to reproduce a playthrough
+  seed: null          # seeds method/clue rolls; the culprit is the
+                      # judge LLM's choice, so see debug_log to reproduce
+  debug_log: judge_debug.jsonl   # dev-only JSONL: the judge's culprit +
+                      # motive pick and the resolved ground truth.
+                      # Set to null to disable (never shown to the player).
 
 # Time costs (in minutes of the in-fiction clock)
 costs:

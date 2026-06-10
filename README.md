@@ -77,15 +77,27 @@ or context every playthrough.
 
 | Job                                   | Agent | Fallback if LLM fails |
 |---------------------------------------|-------|------------------------|
+| Choosing the culprit & their motive   | judge | deterministic weighted pick |
 | Suspect dialogue (lies, tells, memory)| npc   | —                       |
 | True deeds for every NPC at game start| judge | deterministic templates |
 | Boundary gossip between acts          | judge | deterministic templates |
 | Grading WHY and HOW of the accusation | judge | keyword matching        |
-| WHO check, scoring, timers, items     | code  | (never an LLM job)      |
+| Method/timeline/clues, WHO check, scoring, timers, items | code | (never an LLM job) |
 
-Every judge output is validated (JSON shape, no culprit leaks to
-innocents) before use; invalid output falls back, so a flaky model
-can never break a running game.
+The judge picks the killer and which flaws drive them from the authored
+valid combos in the plausibility matrix, so the choice always stays
+coherent with method access and clue trails. Every judge output is
+validated (JSON shape, on-menu pick, no culprit leaks to innocents)
+before use; invalid output falls back, so a flaky model can never break
+a running game.
+
+Because an LLM now makes this call, `--seed` alone no longer reproduces
+the culprit — it still seeds method, clue and accident rolls. To see or
+reproduce a specific game's hidden truth, read the developer debug log
+(`game.debug_log` in config.yaml, default `judge_debug.jsonl`): one JSON
+line per game records the judge's culprit + motive pick (and its
+reasoning) plus the fully resolved ground truth. It's written to disk
+only, never shown to the player.
 
 ## Files
 
