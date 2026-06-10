@@ -1,0 +1,33 @@
+# =============================================================
+# Shifting Truth — agent & game configuration
+#
+# Every LLM agent picks its own brain. provider options:
+#   anthropic : public API   (needs ANTHROPIC_API_KEY env var)
+#   onnx      : local model  (needs onnxruntime-genai + onnx_dir)
+#   mock      : canned replies, no network (plumbing tests)
+#
+# You can mix freely: e.g. cheap API model for NPCs, strong API
+# model for the judge — or NPCs on a local ONNX model and the
+# judge on the API.
+# =============================================================
+agents:
+  npc:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    # provider: onnx
+    # onnx_dir: ./models/phi-3.5-mini-instruct-onnx
+  judge:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    # The judge writes deeds/gossip and grades the final answer.
+    # Give it the strongest model you can afford.
+
+game:
+  case: case.yaml
+  seed: null          # set an integer to reproduce a playthrough
+
+# Time costs (in minutes of the in-fiction clock)
+costs:
+  search: 2           # searching one spot
+  question: 1         # one question to a suspect
+  show: 1             # showing a piece of evidence

@@ -1,0 +1,429 @@
+scenario:
+  title: The Vintner's Fall
+  setting: >
+    The Voss family vineyard estate in Sonoma, on the night of the
+    10th-anniversary retreat of Argent Bio. A storm rolls in over
+    the hills. Five guests, one host, and the player — a journalist
+    invited to profile Diana Voss for the anniversary.
+  the_accident: >
+    At 9:41 PM, during a half-restored blackout, Diana Voss falls
+    from the upper terrace above the cellar entrance. A section of
+    the old railing comes away with her. The player witnesses the
+    fall from the courtyard below — but not what happened on the
+    terrace. The storm has washed out the access road; police are
+    at least two hours away. The interrogation window is now.
+  player_role: >
+    Invited journalist. Plausible reason to ask anyone anything,
+    no authority to compel answers.
+
+victim:
+  name: Diana Voss
+  role: Co-founder & CEO of Argent Bio; owner of the estate
+  public_story: Visionary founder, magnetic, generous host
+  private_story: >
+    Ruthless curator of her own legend. Took credit that wasn't
+    hers, held secrets over people as leverage, and planned to
+    shed anyone who threatened the story of Diana Voss.
+
+timeline_skeleton:
+  - time: "6:30 PM"
+    beat: Guests arrive; Elena gives the estate tour, including
+      the cellar and the upper terrace with its weathered railing
+  - time: "8:00 PM"
+    beat: Dinner on the lower terrace, all seven present
+  - time: "8:50 PM"
+    beat: >
+      Diana's anniversary toast: she announces the sale of the
+      family estate, a company restructuring "to streamline
+      leadership," the licensing of the Meridian patent under her
+      name, and plays a retrospective video of the company history.
+  - time: "9:05 PM"
+    beat: Storm front hits; power fails; candles lit; guests
+      disperse through the dark house
+  - time: "9:28 PM"
+    beat: Backup generator partially restores power; lights flicker
+  - time: "9:41 PM"
+    beat: Diana falls from the upper terrace; the railing section
+      gives way; the player witnesses the fall from the courtyard
+  - time: "9:45 PM"
+    beat: Road washed out; police delayed ~2 hours
+
+shared_public_knowledge:
+  - Everything said in the 8:50 toast
+  - The blackout and the order of the evening's beats
+  - That Diana fell and the railing came away with her
+  - That the railing was old and the estate is visibly underfunded
+
+characters:
+  - character: Marco Chen
+    role: Diana's business partner of 12 years, CFO of Argent Bio
+    public_story: Charming, successful, everyone's friend
+    private_story: >
+      The company is quietly insolvent; he has been covering the
+      gap with personal loans and, lately, money that isn't his.
+    access: Guest wing; toured the cellar at 6:30; helped finance
+      the terrace renovation and knows the railing's history
+    knows_about_others:
+      - Knows the Meridian patent breakthrough was really Priya Sharma's work
+      - Saw James pour whisky into his glass before the toast
+      - Has noticed Elena deferring estate repairs for two years
+    flaws:
+      - id: wounded_pride
+        description: Cannot tolerate being humiliated or dismissed
+        trigger_vs_victim: The "restructuring" announced tonight is
+          his removal — Diana told him privately an hour before
+        behavioral_tells: Gets cold and formal when his competence
+          is questioned; over-explains his decisions
+        motive_seed: She was about to erase him from the company he built
+        lie_tendency: Denies any conflict existed; "we were like brothers"
+      - id: gambling_debt
+        description: Owes dangerous people $200k
+        trigger_vs_victim: Diana found the hole in the accounts last week
+        behavioral_tells: Checks his phone compulsively; deflects
+          questions about money
+        motive_seed: She threatened to go to the police after the retreat
+        lie_tendency: Claims his finances are fine; gets angry if pressed
+
+  - character: Elena Voss-Reyes
+    role: Diana's younger sister; manages the estate
+    public_story: Gracious host, devoted keeper of the family legacy
+    private_story: >
+      The estate is failing. She buried last spring's structural
+      inspection report — the one that flagged the terrace railing.
+    access: Every key on the property; the office, the cellar, the
+      tool room
+    knows_about_others:
+      - Saw Sofia crying in the pantry after the toast
+      - Knows Diana and Marco argued in the study before dinner
+      - Found one of James's empty bottles behind the woodpile
+    flaws:
+      - id: lifelong_envy
+        description: Has been invisible beside Diana since childhood
+        trigger_vs_victim: Diana announced selling the family estate
+          without asking her — without even warning her
+        behavioral_tells: Bitter little jokes about "Diana's
+          spotlight"; corrects people who credit Diana for the estate
+        motive_seed: The sale erases the only thing that was ever hers
+        lie_tendency: Claims she supported the sale; "it was time"
+      - id: guilty_concealment
+        description: Hid the inspection report that condemned the railing
+        trigger_vs_victim: Diana found the report yesterday and
+          called her negligence "exactly why I'm selling"
+        behavioral_tells: Steers conversation away from the terrace
+          and repairs; defensive about her management of the estate
+        motive_seed: If Diana exposed the buried report, Elena's
+          negligence becomes the story of her life
+        lie_tendency: Insists everything was inspected and passed
+          last spring
+
+  - character: Dr. Priya Sharma
+    role: Chief scientist at Argent Bio; Diana's protégée
+    public_story: Rising star, fiercely loyal to her mentor
+    private_story: >
+      The Meridian breakthrough was hers; Diana presented it as her
+      own. Under deadline pressure two years ago Priya smoothed a
+      validation dataset, and Diana knows.
+    access: Guest wing; carries a field kit with lab compounds;
+      knows pharmacology, including Diana's migraine medication
+    knows_about_others:
+      - Knows Sofia handles Diana's pills and private files
+      - Heard Marco on the phone pleading for "two more weeks"
+      - Recognized James was drunk by 8:30
+    flaws:
+      - id: stolen_credit
+        description: Buried rage over authorship of the Meridian patent
+        trigger_vs_victim: The toast announced the patent licensing
+          under Diana's name, with Priya thanked "for her support"
+        behavioral_tells: Flinches when people credit Diana for the
+          patent; becomes surgically precise about who did what
+        motive_seed: With Diana gone, the lab notebooks tell the truth
+        lie_tendency: Calls Diana her mentor; "I owe her everything"
+      - id: fear_of_exposure
+        description: Falsified data Diana holds over her
+        trigger_vs_victim: When Priya hinted at a competitor's
+          offer, Diana smiled and mentioned "the 2024 validation set"
+        behavioral_tells: Rehearsed, word-identical answers about
+          the research; sudden hostility about the trial data
+        motive_seed: If Diana dies before the audit, the leverage dies too
+        lie_tendency: Denies any contact with competitors
+
+  - character: James Okafor
+    role: Diana's ex-husband; co-founder erased from company history
+    public_story: Made his peace; here for closure and old friends
+    private_story: >
+      Broke. The wrongful-ouster lawsuit failed last year. Six
+      months sober until tonight's retrospective video, which told
+      the company's story without him in a single frame.
+    access: Knows the estate from the married years, including the
+      terrace he helped rebuild and exactly how the railing is bolted
+    knows_about_others:
+      - Knows Sofia once helped Diana "tidy" the company archive
+      - Saw Elena standing alone on the upper terrace during the
+        tour, gripping the railing and testing it
+    flaws:
+      - id: erasure_bitterness
+        description: Written out of the history he lived
+        trigger_vs_victim: The anniversary video — ten years, two
+          hundred photos, zero of him
+        behavioral_tells: Tells "actually, I built that" stories;
+          lingers near the old photos in the hallway
+        motive_seed: The lawsuit failed; the erasure is permanent
+          unless the author of it is gone
+        lie_tendency: Laughs it off; "ancient history, I've moved on"
+      - id: relapse_impulse
+        description: Alcohol dissolves his restraint
+        trigger_vs_victim: Confronted Diana during the blackout;
+          what happened next, even he isn't sure of
+        behavioral_tells: Mint over whisky on his breath;
+          over-careful diction; keeps disappearing
+        motive_seed: Not a plan — a shove in the dark he can't take back
+        lie_tendency: Claims he drank soda water all night
+
+  - character: Sofia Lindqvist
+    role: Diana's executive assistant of 5 years
+    public_story: Devoted, hyper-competent, Diana's shadow
+    private_story: >
+      At Diana's instruction she signed paperwork burying a
+      regulatory problem. Yesterday she found her own termination
+      letter in Diana's drafts — beside a memo framing the
+      paperwork as Sofia's "unauthorized initiative."
+    access: Diana's calendar, files, devices, the pill organizer
+      she prepares every morning, and the office printer
+    knows_about_others:
+      - Knows Diana met privately with Marco at 7:40 and that he
+        left the study white-faced
+      - Knows Diana's migraine medication and dosage schedule
+      - Saw Priya slip out during the blackout "to get a sweater"
+    flaws:
+      - id: approval_addiction
+        description: Self-worth fused entirely to Diana's approval
+        trigger_vs_victim: Overheard Diana telling Marco that
+          assistants are "replaceable — that's the point of them"
+        behavioral_tells: Quotes Diana constantly; near-panic over
+          tiny mistakes; speaks of Diana reverently
+        motive_seed: Cut off from the only source of validation,
+          devotion flips to annihilating rage
+        lie_tendency: Insists Diana valued her "like family"
+      - id: scapegoat_panic
+        description: Her signature is on the incriminating paperwork
+        trigger_vs_victim: Found the draft memo framing her, dated
+          the morning after the retreat
+        behavioral_tells: Knows suspiciously precise detail about
+          Diana's files; evasive about what she overheard
+        motive_seed: If Diana dies before the audit, the drafts
+          folder can be emptied and the paperwork can disappear
+        lie_tendency: Claims she has no access to financial records
+
+method_options:
+  - id: loosened_railing
+    description: Railing bolts backed out in advance; the fall was
+      engineered to look like decay
+    requires_access: [Marco Chen, Elena Voss-Reyes, James Okafor]
+    evidence_trail: Fresh tool marks on old bolts; the cellar tool
+      room was visited; the buried inspection report becomes cover
+  - id: push_in_the_dark
+    description: A confrontation on the terrace between 9:28 and
+      9:41; opportunistic, unplanned
+    requires_access: [any]
+    evidence_trail: No tampering; the case rests on alibi holes,
+      witnessed movements, and a liar cracking
+  - id: medication_swap
+    description: Diana's evening migraine pill replaced with a
+      vasodilator; vertigo at the railing did the rest
+    requires_access: [Sofia Lindqvist, Dr. Priya Sharma]
+    evidence_trail: Pill count off by one; a compound missing from
+      a field kit or an organizer prepared off-schedule
+  - id: lure_note
+    description: A typed note drew Diana to the terrace at 9:40
+    requires_access: [Elena Voss-Reyes, Sofia Lindqvist]
+    evidence_trail: Office printer ran on battery power during the
+      blackout; the note may still be in Diana's pocket
+
+plausibility_matrix:
+  - culprit: Marco Chen
+    valid_rolls:
+      - {flaws: [gambling_debt], strength: strong}
+      - {flaws: [wounded_pride, gambling_debt], strength: strong}
+  - culprit: Elena Voss-Reyes
+    valid_rolls:
+      - {flaws: [guilty_concealment], strength: strong}
+      - {flaws: [lifelong_envy, guilty_concealment], strength: strong}
+  - culprit: Dr. Priya Sharma
+    valid_rolls:
+      - {flaws: [fear_of_exposure], strength: strong}
+      - {flaws: [stolen_credit, fear_of_exposure], strength: strong}
+  - culprit: James Okafor
+    valid_rolls:
+      - {flaws: [erasure_bitterness, relapse_impulse], strength: strong}
+      - {flaws: [relapse_impulse], strength: medium}
+  - culprit: Sofia Lindqvist
+    valid_rolls:
+      - {flaws: [approval_addiction, scapegoat_panic], strength: strong}
+      - {flaws: [scapegoat_panic], strength: medium}
+
+special_rolls:
+  - id: true_accident
+    weight: 0.10
+    description: >
+      Nobody did it. The railing was rotten and Elena knew. Her
+      guilty_concealment flaw activates at full intensity; everyone
+      else lies about their own secrets as usual. Correct solve is
+      "accident, concealed negligence."
+
+# =============================================================
+# ACTS — designer-authored scenes. Each act: a place, searchable
+# spots, items (some conditional on the rolled plot), and timed
+# phases. Phase order is yours to define per act.
+# Item conditions: {method: <id>} | {accident: true} | {culprit: <name>} | none = always present
+# =============================================================
+acts:
+  - act: 1
+    title: "The fall — terrace and courtyard"
+    scene_intro: >
+      Rain hammers the canvas Elena threw over the body. The broken
+      railing section lies beside Diana like a confession nobody has
+      signed. Elena is herding the others into the lounge; you have
+      a little time alone with the scene.
+    spots:
+      - id: railing
+        name: the broken railing section
+        empty_text: Splintered wood, old paint, older rust. By
+          candlelight it tells you nothing more.
+        items:
+          - id: tool_marks
+            name: fresh tool marks on the railing bolts
+            condition: {method: loosened_railing}
+            found_text: Under the rust the bolt threads are bright.
+              Three of the four mounts were backed out recently,
+              with a wrench, by someone who knew which three.
+          - id: rotten_core
+            name: rotted railing core
+            condition: {accident: true}
+            found_text: The wood crumbles wet between your fingers.
+              This railing has been dying for years — and someone
+              painted over the rot.
+      - id: stairs
+        name: the terrace stairs
+        empty_text: Wet stone, nothing legible.
+        items:
+          - id: scuff_marks
+            name: fresh scuff marks on the stairs
+            condition: {method: push_in_the_dark}
+            found_text: Wet scuffs climbing the stairs — made after
+              the rain began at 9:05. Someone went up to Diana in
+              the dark, and came down in a hurry.
+      - id: body
+        name: Diana's body
+        empty_text: You can't bring yourself to disturb her further.
+        items:
+          - id: pocket_note
+            name: a damp slip of paper in Diana's pocket
+            condition: {method: lure_note}
+            found_text: 'Typed, no signature: "Upper terrace. 9:40.
+              About the report. Come alone."'
+          - id: dianas_phone
+            name: Diana's phone
+            found_text: Cracked screen, still alive. Last outgoing
+              call — Marco Chen, 7:38 PM, four minutes.
+      - id: table
+        name: the abandoned dinner table
+        empty_text: Cold food, drowned candles, seven chairs.
+        items:
+          - id: seating_chart
+            name: a handwritten seating chart
+            found_text: Diana's hand. She seated Marco at the far
+              end, away from herself — and Sofia at her right.
+    phases:
+      - {type: search, time: 8}
+      - {type: talk, time: 12}
+
+  - act: 2
+    title: "The house — study and Diana's room"
+    scene_intro: >
+      The generator hums; half the house has light again. Elena
+      unlocks the study "so you can see there's nothing to hide."
+      Upstairs, Diana's door stands ajar.
+    spots:
+      - id: desk
+        name: the study desk and printer
+        empty_text: Invoices, estate letterhead, a dead lamp.
+        items:
+          - id: printer_log
+            name: the printer's job log
+            condition: {method: lure_note}
+            found_text: The printer sat on battery backup all night.
+              Its log shows one job — 9:15 PM, mid-blackout, sent
+              from the hallway terminal anyone could reach.
+          - id: marco_ledger
+            name: a private ledger in Marco's handwriting
+            found_text: Tucked behind the company files. Payments to
+              "R.V.", dates, interest — and a two-hundred-thousand
+              dollar hole where company money should be.
+      - id: bedroom
+        name: Diana's room
+        empty_text: Perfume, storm light, a made bed.
+        items:
+          - id: pill_organizer
+            name: Diana's pill organizer
+            condition: {method: medication_swap}
+            found_text: Tonight's slot is empty, as it should be —
+              but the count is one short across the week, and
+              tonight's residue smells wrong for her migraine pills.
+          - id: drafts_folder
+            name: Diana's open laptop, drafts folder
+            found_text: A termination letter for Sofia Lindqvist —
+              and beneath it a memo framing "unauthorized paperwork"
+              as Sofia's initiative. Both dated tomorrow.
+      - id: fireplace
+        name: the lounge fireplace
+        empty_text: Ash and a long-dead fire.
+        items:
+          - id: cropped_photo
+            name: a half-burned photograph
+            found_text: The founding team, ten years ago — Diana,
+              Marco, and a third figure the company's history no
+              longer mentions. James, before the cropping started.
+    phases:
+      - {type: search, time: 8}
+      - {type: talk, time: 12}
+
+  - act: 3
+    title: "The cellar — tool room and archive"
+    scene_intro: >
+      Police lights crawl somewhere down in the valley; the road is
+      almost clear. Elena's keys are on their hook. Whatever this
+      house is still hiding, it's hiding it below.
+    spots:
+      - id: tool_room
+        name: the cellar tool room
+        empty_text: Ordered tools, oiled hinges, Elena's tidiness.
+        items:
+          - id: greasy_wrench
+            name: a wrench wiped almost clean
+            condition: {method: loosened_railing}
+            found_text: Wiped — but grease still sits in the jaw
+              teeth, and it matches the bolt threads on the terrace.
+          - id: field_kit
+            name: Priya's field kit, stowed oddly low
+            condition: {method: medication_swap}
+            found_text: One slot in the vial rack is empty. Its
+              label, in Priya's tidy hand, names a fast-acting
+              vasodilator.
+      - id: archive
+        name: the estate archive shelf
+        empty_text: Wine ledgers back to the seventies.
+        items:
+          - id: inspection_report
+            name: last spring's structural inspection report
+            found_text: 'Folded behind the ledgers. "TERRACE
+              RAILING: CRITICAL. DO NOT LOAD. REPLACE IMMEDIATELY."
+              Receipt of report signed: E. Voss-Reyes.'
+          - id: empty_bottles
+            name: a nest of empty miniature whisky bottles
+            found_text: Hidden behind the shelf, recent, dozens of
+              them. Someone's six months sober has been over for a
+              while.
+    phases:
+      - {type: search, time: 6}
+      - {type: talk, time: 10}
+      - {type: search, time: 6}
