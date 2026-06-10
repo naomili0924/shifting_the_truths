@@ -215,25 +215,32 @@ characters:
         lie_tendency: Claims she has no access to financial records
 
 method_options:
+  # weight: relative likelihood when this method is accessible to the
+  # rolled culprit (default 1). push_in_the_dark is reachable by every
+  # culprit, so it is weighted down to keep the four methods balanced.
   - id: loosened_railing
+    weight: 2
     description: Railing bolts backed out in advance; the fall was
       engineered to look like decay
     requires_access: [Marco Chen, Elena Voss-Reyes, James Okafor]
     evidence_trail: Fresh tool marks on old bolts; the cellar tool
       room was visited; the buried inspection report becomes cover
   - id: push_in_the_dark
+    weight: 1
     description: A confrontation on the terrace between 9:28 and
       9:41; opportunistic, unplanned
     requires_access: [any]
     evidence_trail: No tampering; the case rests on alibi holes,
       witnessed movements, and a liar cracking
   - id: medication_swap
+    weight: 2
     description: Diana's evening migraine pill replaced with a
       vasodilator; vertigo at the railing did the rest
     requires_access: [Sofia Lindqvist, Dr. Priya Sharma]
     evidence_trail: Pill count off by one; a compound missing from
       a field kit or an organizer prepared off-schedule
   - id: lure_note
+    weight: 2
     description: A typed note drew Diana to the terrace at 9:40
     requires_access: [Elena Voss-Reyes, Sofia Lindqvist]
     evidence_trail: Office printer ran on battery power during the
@@ -321,6 +328,12 @@ acts:
             condition: {method: lure_note}
             found_text: 'Typed, no signature: "Upper terrace. 9:40.
               About the report. Come alone."'
+          - id: grab_bruise
+            name: a fresh bruise on Diana's forearm
+            condition: {method: push_in_the_dark}
+            found_text: Four oval marks above the wrist — a hand's
+              grip, made before the fall, not by it. Someone held her,
+              hard, on that terrace before she went over.
           - id: dianas_phone
             name: Diana's phone
             found_text: Cracked screen, still alive. Last outgoing

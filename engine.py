@@ -126,7 +126,11 @@ class Director:
             m for m in self.case["method_options"]
             if m["requires_access"] == ["any"] or culprit in m["requires_access"]
         ]
-        method = self.rng.choice(methods)
+        # Weighted pick: the universally-accessible method (push) is
+        # reachable by every culprit and otherwise swamps the others.
+        # Weights are authored per method in case.yaml (default 1).
+        mweights = [float(m.get("weight", 1)) for m in methods]
+        method = self.rng.choices(methods, weights=mweights, k=1)[0]
 
         # 3) Weave the motive from the rolled flaws' seeds + triggers.
         seeds, triggers = [], []
@@ -441,6 +445,14 @@ def judge_accusation(case: dict, gt: GroundTruth, accused: str,
     score = (50 if who_ok else 0)
     score += {"correct": 35, "partial": 18}.get(motive, 0)
     score += {"correct": 15, "partial": 8}.get(method, 0)
+    # WHO is the gate for the top ratings. Naming the wrong person must
+    # never read as "the right arrest" just because the why/how you
+    # described happen to fit the real killer (motive/method are graded
+    # against the true culprit regardless of who you accused). Cap below
+    # the 50-pt label so a wrong WHO tops out at "you pointed at the
+    # wrong face".
+    if not who_ok:
+        score = min(score, 49)
     rating = next(label for cut, label in _RATINGS if score >= cut)
 
     truth_label = (gt.culprit if gt.is_murder else
