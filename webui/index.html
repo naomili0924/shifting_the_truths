@@ -43,6 +43,8 @@
   .grow{flex:1}
   .timechip{font-variant-numeric:tabular-nums;background:var(--panel2);padding:.3em .7em;border-radius:8px}
   .timechip b{color:var(--accent)}
+  .timechip b.low{color:var(--danger);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.45}}
 
   .layout{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}
   @media(max-width:880px){.layout{grid-template-columns:1fr}}
@@ -135,6 +137,19 @@
 <script>
 const App = document.getElementById('app');
 let state = null, sid = null, lang = 'en', activeNpc = null, busy = false;
+let phaseKey = null, deadline = 0, expired = false, ticker = null;
+
+function fmtTime(s){ const m=Math.floor(s/60); return m+':'+String(s%60).padStart(2,'0'); }
+function tick(){
+  if(!state) return;
+  const k = state.phase_kind;
+  if(k!=='search' && k!=='talk') return;
+  const el = document.getElementById('timer');
+  const rem = Math.max(0, Math.ceil((deadline - Date.now())/1000));
+  if(el){ el.textContent = fmtTime(rem); el.classList.toggle('low', rem<=20); }
+  if(rem<=0 && !expired){ expired = true; autoEnd(); }
+}
+function autoEnd(){ if(busy){ setTimeout(autoEnd,300); return; } endPhase(); }
 
 function W(k){ return (state && state.web && state.web[k]) || k; }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -190,6 +205,12 @@ function render(){
   if(!state){ renderStart(); return; }
   document.documentElement.lang = state.lang;
   const k = state.phase_kind;
+  // Real-time countdown: (re)arm the deadline whenever the phase changes.
+  if(k==='search' || k==='talk'){
+    const key = k+':'+state.phase_index;
+    if(key!==phaseKey){ phaseKey=key; deadline=Date.now()+(state.phase_seconds||0)*1000; expired=false; }
+    if(!ticker) ticker=setInterval(tick,250);
+  } else { phaseKey=null; }
   let main = '';
   if(k==='search') main = viewSearch();
   else if(k==='talk') main = viewTalk();
@@ -208,6 +229,7 @@ function render(){
       </div>
     </div>`;
   wire(k);
+  tick();   // paint the clock immediately, don't wait for the interval
 }
 
 function topbar(k){
@@ -216,7 +238,7 @@ function topbar(k){
   const actLabel = state.act_num ?
      (state.lang==='zh' ? `第 ${state.act_num} 幕` : `Act ${state.act_num}`) : '';
   const timeHtml = (k==='search'||k==='talk') ?
-     `<div class="timechip">${esc(W('time_left'))} <b>${state.time_left}</b> ${esc(W('min'))}</div>
+     `<div class="timechip">⏱ <b id="timer">--:--</b></div>
       <button id="endphase">${esc(W('next_phase'))}</button>` : '';
   return `<div class="topbar">
       <div class="title">${esc(state.scenario.title)}</div>
@@ -275,7 +297,6 @@ function convo(c){
      return `<div class="msg npc">${esc(m.text)}</div>`;
   }).join('') : `<div class="msg sys">${state.lang==='zh'?'（开始你的盘问……）':'(begin your interrogation…)'}</div>`;
   const evOpts = state.evidence.map(e=>`<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('');
-  const noTime = state.time_left < 1;
   return `<div class="convo">
       <div class="head">
         <button id="back">${esc(W('back_to_suspects'))}</button>
@@ -284,14 +305,13 @@ function convo(c){
       </div>
       <div class="log" id="log">${log}</div>
       <div class="composer">
-        <input id="q" placeholder="${esc(W('type_here'))}" ${noTime?'disabled':''} autocomplete="off">
-        <button id="send" class="btn-primary" ${noTime?'disabled':''}>${esc(W('send'))}</button>
+        <input id="q" placeholder="${esc(W('type_here'))}" autocomplete="off">
+        <button id="send" class="btn-primary">${esc(W('send'))}</button>
       </div>
       ${state.evidence.length?`<div class="showrow">
         <select id="evsel">${evOpts}</select>
-        <button id="showev" ${noTime?'disabled':''}>${esc(W('show_evidence'))}</button>
+        <button id="showev">${esc(W('show_evidence'))}</button>
       </div>`:''}
-      ${noTime?`<div class="muted" style="margin-top:8px">${esc(W('no_time'))}</div>`:''}
     </div>`;
 }
 

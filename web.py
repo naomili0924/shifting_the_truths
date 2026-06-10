@@ -35,6 +35,10 @@ from engine import (
 HERE = os.path.dirname(os.path.abspath(__file__))
 AVATAR_COLORS = ["#b4654a", "#4a6fa5", "#5a8a5a", "#8a5a8a", "#a5904a"]
 AVATAR_EMOJI = ["💼", "🔑", "🔬", "🥃", "📋"]
+# Real-time countdown: how many real seconds each in-fiction minute of a
+# phase budget is worth. The client ticks this down live and auto-ends
+# the phase at zero (~20 min total game at the default).
+SECONDS_PER_MIN = 20
 
 
 def _safe_provider(cfg_block):
@@ -95,7 +99,6 @@ class WebGame:
                     "last_of_act": phi == len(act["phases"]) - 1,
                 })
         self.pi = 0
-        self.time_left = int(self.plan[0]["phase"]["time"]) if self.plan else 0
 
         self.avatars = {
             n: {"initial": n[0],
@@ -146,15 +149,11 @@ class WebGame:
         cur = self._cur()
         if not cur or cur["phase"]["type"] != "search":
             return {"error": "not_search"}
-        cost = int(self.costs.get("search", 2))
-        if self.time_left < cost:
-            return {"error": self.L["web"]["no_time"]}
         spot = next((s for s in cur["act"]["spots"] if s["id"] == spot_id), None)
         if not spot:
             return {"error": "bad_spot"}
         if spot_id in self.searched:
             return {"error": self.L["web"]["already_searched"]}
-        self.time_left -= cost
         self.searched.add(spot_id)
         found = [i for i in spot.get("items", []) if item_present(i, self.gt)]
         self.found[spot_id] = [{"name": i["name"], "found_text": i["found_text"]}
@@ -174,10 +173,6 @@ class WebGame:
             return {"error": "bad_name"}
         if not text.strip():
             return {"error": "empty"}
-        cost = int(self.costs.get("question", 1))
-        if self.time_left < cost:
-            return {"error": self.L["web"]["no_time"]}
-        self.time_left -= cost
         self.questions_log[name].append(text)
         self.chat[name].append({"who": "you", "text": text})
         reply = self._npc_reply(name, text)
@@ -193,10 +188,6 @@ class WebGame:
         item = next((e for e in self.evidence if e["name"] == item_name), None)
         if not item:
             return {"error": "no_item"}
-        cost = int(self.costs.get("show", 1))
-        if self.time_left < cost:
-            return {"error": self.L["web"]["no_time"]}
-        self.time_left -= cost
         msg = self.L["ui"]["evidence_present"].format(
             name=item["name"], text=item["found_text"])
         self.chat[name].append({"who": "you", "text": "▸ " + item["name"]})
@@ -212,8 +203,6 @@ class WebGame:
             self.pi += 1
             if was_last and self.pi < len(self.plan):
                 gossip = self._boundary(cur["act"]["act"])
-            if self.pi < len(self.plan):
-                self.time_left = int(self.plan[self.pi]["phase"]["time"])
         return gossip
 
     def _boundary(self, act_no):
@@ -238,6 +227,8 @@ class WebGame:
         cur = self._cur()
         kind = self.phase_kind()
         act = cur["act"] if cur else None
+        phase_seconds = (int(cur["phase"]["time"]) * SECONDS_PER_MIN
+                         if cur else 0)
         spots = []
         if act:
             for s in act["spots"]:
@@ -271,7 +262,7 @@ class WebGame:
             "act_intro": act.get("scene_intro", "") if act else "",
             "phase_index": self.pi + 1,
             "phase_total": len(self.plan),
-            "time_left": self.time_left,
+            "phase_seconds": phase_seconds,
             "spots": spots,
             "cast": cast,
             "evidence": self.evidence,
