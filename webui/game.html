@@ -9,10 +9,10 @@
   :root{ --ink:#e8e2d6; --dim:#9a9082; --panel:#161310ee; --line:#3a342c;
          --accent:#c9a14a; --bad:#b4654a; }
   *{ box-sizing:border-box; }
-  html,body{ margin:0; height:100%; background:#0c0a08; color:var(--ink);
+  html,body{ margin:0; height:100%; overflow:hidden; background:#0c0a08; color:var(--ink);
     font-family:"Iowan Old Style",Georgia,"Songti SC",serif; }
-  #wrap{ position:relative; width:960px; max-width:100%; margin:0 auto; }
-  #game{ width:960px; height:640px; max-width:100%; }
+  #wrap{ position:relative; width:100vw; height:100vh; margin:0; }
+  #game{ width:100vw; height:100vh; }
   /* DOM overlays sit above the Phaser canvas */
   .overlay{ position:absolute; inset:0; display:none; z-index:20;
     background:#0c0a08cc; align-items:center; justify-content:center; }
@@ -116,7 +116,8 @@
 //  generated backdrop is atmosphere behind it, and hotspots are CHIPS, never
 //  pixels — so nothing breaks if the painting put the desk somewhere else.
 // ----------------------------------------------------------------------------
-const W = 960, H = 640, TOP_H = 460;   // top area shows the backdrop + chips
+// Dimensions track the browser window (full-page canvas, Phaser RESIZE mode).
+let W = window.innerWidth, H = window.innerHeight, TOP_H = Math.max(360, H - 190);
 const G = { sid:null, state:null, lang:'en' };
 
 async function api(path, body){
@@ -188,7 +189,11 @@ class IntroScene extends Phaser.Scene {
   async poll(){
     const s = await api('/state'); if(s && !s.error){ G.state = s; }
     const img = (G.state.images)||{};
-    const ready = !img.art_enabled || img.images_done || img.backdrop;
+    const setup = !!G.state.setup_done;
+    this.note.setText(!setup ? 'Setting the scene…'
+                      : (img.art_enabled && !img.backdrop) ? 'Painting the estate…'
+                      : 'Ready.');
+    const ready = setup && (!img.art_enabled || img.backdrop);
     if(ready && !this.enterBtn){
       this.note.setText(img.art_enabled ? 'The estate is painted.' : 'Art disabled — plain backdrops.');
       this.timer.remove();
@@ -201,9 +206,33 @@ class IntroScene extends Phaser.Scene {
 }
 
 // ============================ Play (the world) =============================
+// Scene world is a square the camera roams (the painting is square). Big enough
+// to pan/zoom into; the painting upscales to fill it.
+let SW = Math.round(Math.max(W, H) * 1.25);
+
 class PlayScene extends Phaser.Scene {
   constructor(){ super('Play'); }
-  create(){ this.world=this.add.container(0,0); this.curAct=null; this.loadAndBuild(); }
+  create(){
+    this.objs=[]; this.explore=false; this.minZoom=H/SW;
+    const cam=this.cameras.main;
+    cam.setBackgroundColor('#0c0a08');
+    // drag-to-pan (only while exploring; ignored over fixed UI clicks)
+    this.input.on('pointerdown', p=>{ this._d={x:p.x,y:p.y,sx:cam.scrollX,sy:cam.scrollY}; this._dragged=false; });
+    this.input.on('pointermove', p=>{
+      if(!this.explore || !p.isDown || !this._d) return;
+      const dx=p.x-this._d.x, dy=p.y-this._d.y;
+      if(Math.abs(dx)+Math.abs(dy)>6) this._dragged=true;
+      cam.scrollX=this._d.sx-dx/cam.zoom; cam.scrollY=this._d.sy-dy/cam.zoom;
+    });
+    this.input.on('pointerup', ()=>{ this._d=null; });
+    this.input.on('wheel', (p,go,dx,dy)=>{ if(this.explore) this.zoomBy(dy>0?0.88:1.14); });
+    // Separate UI camera that never pans/zooms, so chrome stays put while the
+    // main camera roams the scene.
+    this.uiCam = this.cameras.add(0,0,W,H);
+    this.worldObjs=[]; this.uiObjs=[];
+    this.loadAndBuild();
+  }
+  zoomBy(f){ const c=this.cameras.main; c.setZoom(Phaser.Math.Clamp(c.zoom*f, this.minZoom, 2.8)); }
 
   texKey(url){ return 'tex_'+url.replace(/\W/g,'_'); }
   needTextures(){
@@ -218,89 +247,97 @@ class PlayScene extends Phaser.Scene {
     need.forEach(u=> this.load.image(this.texKey(u), u));
     this.load.once('complete', ()=>this.build()); this.load.start();
   }
+  async refresh(extra){ if(extra) Object.assign(G.state, extra); this.loadAndBuild(); }
 
-  // Re-pull state from server then rebuild everything.
-  async refresh(extra){
-    if(extra) Object.assign(G.state, extra);
-    this.loadAndBuild();
+  reg(o){ this.objs.push(o); return o; }
+  // world() = roams with the main camera; fix() = pinned by the UI camera.
+  world(o){ this.worldObjs.push(o); return this.reg(o); }
+  clearObjs(){
+    (this.objs||[]).forEach(o=>{ try{o.destroy();}catch(e){} });
+    this.objs=[]; this.worldObjs=[]; this.uiObjs=[];
   }
 
   build(){
-    this.world.removeAll(true);
+    this.clearObjs();
     const st=G.state, img=st.images||{}, kind=st.phase_kind;
-    // ---- backdrop (atmosphere) ----
-    if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
-      const bd=this.add.image(W/2, TOP_H/2, this.texKey(img.backdrop));
-      const s=Math.max(W/bd.width, TOP_H/bd.height); bd.setScale(s);
-      const mask=this.make.graphics().fillRect(0,0,W,TOP_H);
-      bd.setMask(mask.createGeometryMask()); this.world.add(bd);
+    const cam=this.cameras.main;
+    cam.setSize(W,H); this.uiCam.setSize(W,H);   // track full-page canvas
+
+    if(kind==='search'){
+      // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
+      this.explore=true;
+      cam.setBounds(0,0,SW,SW);
+      cam.setZoom(W/SW);            // start filling the view; zoom out to see all
+      cam.centerOn(SW/2, SW/2);
+      if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
+        this.world(this.add.image(0,0,this.texKey(img.backdrop)).setOrigin(0).setDisplaySize(SW,SW));
+      } else {
+        this.world(this.add.rectangle(0,0,SW,SW,0x171310).setOrigin(0));
+      }
+      // invisible clickable regions placed from the manifest — no markers, no
+      // labels, no hints. Found by exploring and clicking.
+      const chips=img.chips||{};
+      (st.spots||[]).forEach(sp=>{
+        const p=chips[sp.id]||{x:0.5,y:0.6};
+        const zx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW;
+        const zy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
+        const z=this.world(this.add.zone(zx,zy,150,150).setInteractive({useHandCursor:true}));
+        z.on('pointerup',()=>{
+          if(this._dragged) return;
+          if(!sp.searched) doSearch(sp.id);
+          else if((sp.found||[]).length) showSpotResult(sp);
+        });
+      });
     } else {
-      this.world.add(this.add.rectangle(W/2,TOP_H/2,W,TOP_H,0x171310));
+      // ---- talk / accuse / over: fixed framing ----
+      this.explore=false;
+      cam.setBounds(0,0,W,H); cam.setZoom(1); cam.centerOn(W/2,H/2);
+      if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
+        const bd=this.world(this.add.image(W/2, TOP_H/2, this.texKey(img.backdrop)));
+        bd.setScale(Math.max(W/bd.width, TOP_H/bd.height));
+        const mask=this.make.graphics().fillRect(0,0,W,TOP_H);
+        bd.setMask(mask.createGeometryMask());
+      } else {
+        this.world(this.add.rectangle(W/2,TOP_H/2,W,TOP_H,0x171310));
+      }
+      this.world(this.add.rectangle(0,TOP_H,W,H-TOP_H,0x0e0c0a).setOrigin(0));
+      this.world(this.add.line(0,TOP_H,0,0,W,0,0x3a342c).setOrigin(0));
+      if(kind==='talk'){ (st.cast||[]).forEach((c,i)=> this.world(this.makeFace(c,i,kind))); }
     }
-    // ---- HUD ----
-    const hud=this.add.rectangle(0,0,W,40,0x000000,0.55).setOrigin(0); this.world.add(hud);
-    this.world.add(this.add.text(12,10, `Act ${st.act_num||'-'} · ${st.act_title||''}`,
-      {fontSize:'15px',color:'#e8e2d6'}));
+
+    // ---- fixed UI chrome (rendered by the UI camera, never pans/zooms) ----
+    const fix=o=>{ this.uiObjs.push(o); return this.reg(o); };
+    fix(this.add.rectangle(0,0,W,40,0x000000,0.55).setOrigin(0));
+    fix(this.add.text(12,10, `Act ${st.act_num||'-'} · ${st.act_title||''}`, {fontSize:'15px',color:'#e8e2d6'}));
     const kindLabel = kind==='search'?'SEARCH':kind==='talk'?'INTERROGATE':kind==='accuse'?'ACCUSE':'—';
-    this.world.add(this.add.text(W-12,10, `${kindLabel}  ·  phase ${st.phase_index}/${st.phase_total}`,
+    fix(this.add.text(W-12,10, `${kindLabel}  ·  phase ${st.phase_index}/${st.phase_total}`,
       {fontSize:'14px',color:'#c9a14a'}).setOrigin(1,0));
-    this.timerText=this.add.text(W/2,10,'',{fontSize:'14px',color:'#bcb3a3'}).setOrigin(.5,0);
-    this.world.add(this.timerText); this.startTimer(st.phase_seconds||0);
+    this.timerText=fix(this.add.text(W/2,10,'',{fontSize:'14px',color:'#bcb3a3'}).setOrigin(.5,0));
+    this.startTimer(st.phase_seconds||0);
+
+    // evidence + next (fixed)
+    fix(this.add.text(20,H-34, `🗂 ${(st.evidence||[]).length}`, {fontSize:'16px',color:'#bcb3a3'})
+      .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) openEvidence(); }));
+    if(kind!=='accuse' && kind!=='over'){
+      const nextLabel = (st.phase_index>=st.phase_total) ? 'The police arrive ▸' : 'End phase ▸';
+      fix(this.add.text(W-20,H-34, nextLabel, {fontSize:'15px',color:'#1a1408',
+        backgroundColor:'#c9a14a', padding:{x:10,y:6}, fontStyle:'bold'}).setOrigin(1,0)
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) doNext(); }));
+    }
+    // zoom controls (search only) — symbols, no words
+    if(kind==='search'){
+      const mkZoom=(label,dx,f)=> fix(this.add.text(W-20-dx, H-78, label, {fontSize:'22px',color:'#e8e2d6',
+        backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(1,0)
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) this.zoomBy(f); }));
+      mkZoom('+',0,1.25); mkZoom('−',52,0.8);
+    }
 
     if(kind==='accuse'){ openAccuse(); }
-
-    // ---- spot chips (manifest-driven, NOT pixels) ----
-    const chips=img.chips||{};
-    (st.spots||[]).forEach(sp=>{
-      const p=chips[sp.id]||{x:0.5,y:0.6};
-      const x=Phaser.Math.Clamp(p.x,0.06,0.94)*W;
-      const y=46 + Phaser.Math.Clamp(p.y,0.05,0.95)*(TOP_H-60);
-      this.world.add(this.makeChip(x,y,sp,kind));
-    });
-
-    // ---- bottom strip: faces + controls ----
-    this.world.add(this.add.rectangle(0,TOP_H,W,H-TOP_H,0x0e0c0a).setOrigin(0));
-    this.world.add(this.add.line(0,TOP_H,0,0,W,0,0x3a342c).setOrigin(0));
-    (st.cast||[]).forEach((c,i)=> this.world.add(this.makeFace(c,i,kind)));
-
-    // evidence + next
-    const ev=this.add.text(20,H-34, `🗂  Evidence: ${(st.evidence||[]).length}`,
-      {fontSize:'15px',color:'#bcb3a3'}).setInteractive({useHandCursor:true})
-      .on('pointerdown',()=>openEvidence());
-    this.world.add(ev);
-
-    const nextLabel = (st.phase_index>=st.phase_total) ? 'The police arrive ▸' : 'End phase ▸';
-    if(kind!=='accuse' && kind!=='over'){
-      const nb=this.add.text(W-20,H-34, nextLabel, {fontSize:'15px',color:'#1a1408',
-        backgroundColor:'#c9a14a', padding:{x:10,y:6}, fontStyle:'bold'}).setOrigin(1,0)
-        .setInteractive({useHandCursor:true}).on('pointerdown',()=>doNext());
-      this.world.add(nb);
-    }
-    if(st.mock){
-      this.world.add(this.add.text(W/2,H-22,'(no API key — suspects give canned replies)',
-        {fontSize:'12px',color:'#6f675b'}).setOrigin(.5));
-    }
     if(kind==='over' && st.verdict){ openVerdict(); }
-  }
 
-  makeChip(x,y,sp,kind){
-    const enabled = (kind==='search') && !sp.searched;
-    const found = (sp.found||[]).length>0;
-    const label = sp.name + (sp.searched? (found?'  ✓':'  ·'):'');
-    const tx=this.add.text(0,0,label,{fontSize:'14px',color: enabled?'#1a1408':'#cdbf9a',
-      backgroundColor: enabled?'#c9a14a': (sp.searched?'#2a2118':'#3a3026'),
-      padding:{x:9,y:6}}).setOrigin(.5);
-    const g=this.add.container(x,y,[tx]);
-    g.setSize(tx.width,tx.height);
-    if(enabled){
-      g.setInteractive({useHandCursor:true})
-       .on('pointerover',()=>tx.setBackgroundColor('#e6c06a'))
-       .on('pointerout', ()=>tx.setBackgroundColor('#c9a14a'))
-       .on('pointerdown',()=>doSearch(sp.id));
-    } else if(sp.searched){
-      g.setInteractive({useHandCursor:true}).on('pointerdown',()=>showSpotResult(sp));
-    }
-    return g;
+    // Each camera renders only its own layer.
+    this.cameras.main.ignore(this.uiObjs);
+    this.uiCam.ignore(this.worldObjs);
   }
 
   makeFace(c,i,kind){
@@ -458,8 +495,25 @@ function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&
 const game = new Phaser.Game({
   type: Phaser.AUTO, parent:'game', width:W, height:H,
   backgroundColor:'#0c0a08',
-  scale:{ mode:Phaser.Scale.FIT, autoCenter:Phaser.Scale.CENTER_HORIZONTALLY },
+  scale:{ mode:Phaser.Scale.RESIZE, parent:'game', width:'100%', height:'100%' },
   scene:[StartScene, IntroScene, PlayScene]
+});
+
+// Keep the global dimensions in sync with the canvas and re-lay-out on resize.
+function applySize(w,h){
+  W=Math.round(w); H=Math.round(h);
+  TOP_H=Math.max(360, H-190);
+  SW=Math.round(Math.max(W,H)*1.25);
+}
+game.scale.on('resize', (sz)=>{
+  applySize(sz.width, sz.height);
+  clearTimeout(window.__rz);
+  window.__rz=setTimeout(()=>{
+    game.scene.getScenes(true).forEach(s=>{
+      if(s.scene.key==='Play' && Array.isArray(s.objs)) s.build();
+      else if(s.scene.isActive()) s.scene.restart();
+    });
+  }, 120);
 });
 </script>
 </body>

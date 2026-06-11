@@ -83,16 +83,20 @@ class WebGame:
         self.victim = victim_name(self.case)
 
         self.director = Director(self.case, seed=gcfg.get("seed"), lang=self.lang)
-        self.gt = self.director.roll(selector=self._select)
         self.names = [c["character"] for c in self.case["characters"]]
-        self.deeds = judge_generate_deeds(
-            self.case, self.gt, self.judge_llm, self.director.rng, self.lang)
-        self.base_prompt = {
-            c["character"]: build_npc_system_prompt(
-                self.case, c, self.gt,
-                deeds=self.deeds.get(c["character"]), lang=self.lang)
-            for c in self.case["characters"]
-        }
+        self.images_cfg = cfg.get("images") or {}
+
+        # The heavy work — the judge's culprit pick, the per-NPC deeds, the system
+        # prompts and the room manifests — used to run here, blocking /api/new for
+        # a minute. It now happens in a background thread so the request returns
+        # instantly and the setup hides behind the scenario intro. Placeholders
+        # keep to_dict() safe before setup completes.
+        self.ready = False
+        self.gt = None
+        self.deeds = {}
+        self.base_prompt = {}
+        self.room_manifests = {}
+
         self.extras = {n: [] for n in self.names}
         self.histories = {n: [] for n in self.names}
         self.chat = {n: [] for n in self.names}       # display log {who,text}
@@ -120,14 +124,6 @@ class WebGame:
             for i, n in enumerate(self.names)
         }
 
-        # ---- visual manifest (data first) + background painting (paint second) ----
-        # Build each act's room manifest now (judge-authored layout, verified, with
-        # a deterministic fallback), then paint backdrops + the fixed faces in a
-        # background thread so the latency hides behind the scenario intro.
-        self.room_manifests = {
-            act["act"]: rooms.judge_room_layout(self.case, act, self.judge_llm, self.lang)
-            for act in self.case["acts"]
-        }
         self._img_lock = threading.Lock()
         self.backdrops: dict[int, str | None] = {}   # act_num -> filename
         self.faces: dict[str, str | None] = {}        # npc name -> filename
@@ -135,8 +131,51 @@ class WebGame:
         self.images_done = False
         gen = imagegen.instance()
         self.art_enabled = bool(gen and gen.available())
+
+        # Everything heavy runs off the request path, behind the intro.
+        threading.Thread(target=self._setup, daemon=True).start()
+
+    # ---- background setup (judge work) then painting ----------------
+    def _setup(self):
+        """Roll the plot, write deeds + prompts + room manifests, then paint.
+
+        Runs in a daemon thread; the client shows the scenario intro and polls
+        /api/state until ``setup_done`` (and the first backdrop) is ready.
+        """
+        # 1) The culprit roll is the only judge step the first (search) phase needs
+        #    — item_present() depends on it — so do it first and mark the game
+        #    playable as soon as it (and the instant deterministic manifest) is set.
+        try:
+            self.gt = self.director.roll(selector=self._select)
+        except Exception:
+            self.gt = self.director.roll()
+        use_judge = bool(self.images_cfg.get("judge_layout"))
+        self.room_manifests = {
+            act["act"]: (
+                rooms.judge_room_layout(self.case, act, self.judge_llm, self.lang)
+                if use_judge else rooms.default_manifest(self.case, act)
+            )
+            for act in self.case["acts"]
+        }
+        self.ready = True
+
+        # 2) Paint the rooms/faces/items (backdrop the intro waits for).
         if self.art_enabled:
-            threading.Thread(target=self._paint_all, daemon=True).start()
+            self._paint_all()
+
+        # 3) Deeds + NPC system prompts are only needed in the talk phase (after
+        #    the timed search phase), so generate them after the game is playable.
+        try:
+            self.deeds = judge_generate_deeds(
+                self.case, self.gt, self.judge_llm, self.director.rng, self.lang)
+        except Exception:
+            self.deeds = {}
+        self.base_prompt = {
+            c["character"]: build_npc_system_prompt(
+                self.case, c, self.gt,
+                deeds=self.deeds.get(c["character"]), lang=self.lang)
+            for c in self.case["characters"]
+        }
 
     # ---- background art painting -----------------------------------
     def _paint_all(self):
@@ -223,6 +262,8 @@ class WebGame:
 
     # ---- actions ----------------------------------------------------
     def search(self, spot_id):
+        if not self.ready:
+            return {"error": "loading"}
         cur = self._cur()
         if not cur or cur["phase"]["type"] != "search":
             return {"error": "not_search"}
@@ -243,11 +284,17 @@ class WebGame:
         return {"ok": True}
 
     def talk(self, name, text):
+        if not self.ready:
+            return {"error": "loading"}
         cur = self._cur()
         if not cur or cur["phase"]["type"] != "talk":
             return {"error": "not_talk"}
         if name not in self.names:
             return {"error": "bad_name"}
+        if name not in self.base_prompt:
+            return {"ok": True,
+                    "reply": self.L["web"].get("suspects_arriving",
+                                               "The suspects are still gathering — try again in a moment.")}
         if not text.strip():
             return {"error": "empty"}
         self.questions_log[name].append(text)
@@ -257,6 +304,8 @@ class WebGame:
         return {"ok": True, "reply": reply}
 
     def show(self, name, item_name):
+        if not self.ready:
+            return {"error": "loading"}
         cur = self._cur()
         if not cur or cur["phase"]["type"] != "talk":
             return {"error": "not_talk"}
@@ -273,6 +322,8 @@ class WebGame:
         return {"ok": True, "reply": reply}
 
     def next_phase(self):
+        if not self.ready:
+            return None
         gossip = None
         cur = self._cur()
         if cur:
@@ -293,6 +344,8 @@ class WebGame:
                 for n, lines in gossip.items()]
 
     def accuse(self, who, why, how):
+        if not self.ready:
+            return {"error": "loading"}
         if self.pi < len(self.plan):
             return {"error": "not_finished"}
         self.verdict = judge_accusation(
@@ -361,6 +414,7 @@ class WebGame:
             "lang": self.lang,
             "web": self.L["web"],
             "mock": self.mock,
+            "setup_done": self.ready,
             "victim": self.victim,
             "scenario": {
                 "title": self.case["scenario"]["title"],
