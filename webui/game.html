@@ -253,19 +253,30 @@ class PlayScene extends Phaser.Scene {
 
     if(kind==='accuse'){ openAccuse(); }
 
-    // ---- spot chips (manifest-driven, NOT pixels) ----
-    const chips=img.chips||{};
-    (st.spots||[]).forEach(sp=>{
-      const p=chips[sp.id]||{x:0.5,y:0.6};
-      const x=Phaser.Math.Clamp(p.x,0.06,0.94)*W;
-      const y=46 + Phaser.Math.Clamp(p.y,0.05,0.95)*(TOP_H-60);
-      this.world.add(this.makeChip(x,y,sp,kind));
-    });
+    // ---- search phase: wordless hotspot markers (manifest-driven, NOT pixels) ----
+    // Positioned from the manifest so they stay robust no matter where the model
+    // painted things; no spot names are drawn on the scene.
+    if(kind==='search'){
+      const chips=img.chips||{};
+      (st.spots||[]).forEach(sp=>{
+        const p=chips[sp.id]||{x:0.5,y:0.6};
+        const x=Phaser.Math.Clamp(p.x,0.06,0.94)*W;
+        const y=46 + Phaser.Math.Clamp(p.y,0.05,0.95)*(TOP_H-60);
+        this.world.add(this.makeHotspot(x,y,sp));
+      });
+      this.world.add(this.add.text(W/2,TOP_H-16,'Search the scene — investigate the glowing marks',
+        {fontSize:'13px',color:'#9a9082'}).setOrigin(.5));
+    }
 
-    // ---- bottom strip: faces + controls ----
+    // ---- bottom strip: controls (+ faces only when interrogating) ----
     this.world.add(this.add.rectangle(0,TOP_H,W,H-TOP_H,0x0e0c0a).setOrigin(0));
     this.world.add(this.add.line(0,TOP_H,0,0,W,0,0x3a342c).setOrigin(0));
-    (st.cast||[]).forEach((c,i)=> this.world.add(this.makeFace(c,i,kind)));
+    if(kind==='talk'){
+      (st.cast||[]).forEach((c,i)=> this.world.add(this.makeFace(c,i,kind)));
+    } else if(kind==='search'){
+      this.world.add(this.add.text(W/2,TOP_H+60,'The suspects are waiting in the lounge — find what you can first.',
+        {fontSize:'14px',color:'#6f675b'}).setOrigin(.5));
+    }
 
     // evidence + next
     const ev=this.add.text(20,H-34, `🗂  Evidence: ${(st.evidence||[]).length}`,
@@ -287,21 +298,25 @@ class PlayScene extends Phaser.Scene {
     if(kind==='over' && st.verdict){ openVerdict(); }
   }
 
-  makeChip(x,y,sp,kind){
-    const enabled = (kind==='search') && !sp.searched;
+  makeHotspot(x,y,sp){
+    // A wordless clickable mark. Unsearched: a pulsing gold ring with a search
+    // glyph. Searched: a quiet ring (✓ if it yielded something). No spot names.
+    const searched = sp.searched;
     const found = (sp.found||[]).length>0;
-    const label = sp.name + (sp.searched? (found?'  ✓':'  ·'):'');
-    const tx=this.add.text(0,0,label,{fontSize:'14px',color: enabled?'#1a1408':'#cdbf9a',
-      backgroundColor: enabled?'#c9a14a': (sp.searched?'#2a2118':'#3a3026'),
-      padding:{x:9,y:6}}).setOrigin(.5);
-    const g=this.add.container(x,y,[tx]);
-    g.setSize(tx.width,tx.height);
-    if(enabled){
+    const ringColor = searched ? (found ? 0x6f9e5a : 0x6f675b) : 0xc9a14a;
+    const glyphColor = searched ? (found ? '#9ec98a' : '#9a9082') : '#e6c06a';
+    const halo = this.add.circle(0,0,20,0x000000,0.30).setStrokeStyle(2,ringColor);
+    const glyph = this.add.text(0,0, searched ? (found?'✓':'·') : '⌕',
+      {fontSize:'20px', color:glyphColor}).setOrigin(.5);
+    const g=this.add.container(x,y,[halo,glyph]); g.setSize(44,44);
+    if(!searched){
+      this.tweens.add({targets:halo, scale:1.35, alpha:0.55, duration:950,
+        yoyo:true, repeat:-1, ease:'Sine.inOut'});
       g.setInteractive({useHandCursor:true})
-       .on('pointerover',()=>tx.setBackgroundColor('#e6c06a'))
-       .on('pointerout', ()=>tx.setBackgroundColor('#c9a14a'))
+       .on('pointerover',()=>g.setScale(1.18))
+       .on('pointerout', ()=>g.setScale(1))
        .on('pointerdown',()=>doSearch(sp.id));
-    } else if(sp.searched){
+    } else if(found){
       g.setInteractive({useHandCursor:true}).on('pointerdown',()=>showSpotResult(sp));
     }
     return g;
