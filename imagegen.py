@@ -159,22 +159,44 @@ class ImageGen:
                 return None
 
 
-# Module-level singleton, configured once by the web layer.
-_INSTANCE: ImageGen | None = None
+# Per-language registry, configured once by the web layer. Each language maps to
+# its own model + params (EN -> SDXL-Turbo, ZH -> Hunyuan-DiT). Pipelines are
+# built lazily on first use, so an English game never loads the Chinese model and
+# vice-versa.
+_CFG: dict | None = None
+_INSTANCES: dict[str, ImageGen] = {}
 
 
-def configure(cfg: dict | None) -> ImageGen:
-    global _INSTANCE
-    _INSTANCE = ImageGen(cfg)
-    return _INSTANCE
+def configure(cfg: dict | None) -> dict | None:
+    """Store the image config. Shape:
+
+        {enabled, idmc_path, provider, cache_dir,
+         by_lang: {en: {model_dir, width, height, steps, guidance, style}, zh: {...}}}
+
+    Keys outside ``by_lang`` are shared defaults merged into each language. A flat
+    config (no ``by_lang``) is treated as the config for every language.
+    """
+    global _CFG, _INSTANCES
+    _CFG = dict(cfg or {})
+    _INSTANCES = {}
+    return _CFG
 
 
-def instance() -> ImageGen | None:
-    return _INSTANCE
+def instance(lang: str = "en") -> ImageGen | None:
+    """Return the (lazily built) ImageGen for *lang*, or None if disabled."""
+    if _CFG is None or not _CFG.get("enabled", True):
+        return None
+    by_lang = _CFG.get("by_lang") or {}
+    key = lang if lang in by_lang else ("en" if "en" in by_lang else "_default")
+    if key not in _INSTANCES:
+        base = {k: v for k, v in _CFG.items() if k != "by_lang"}
+        merged = {**base, **(by_lang.get(key, {}))}
+        _INSTANCES[key] = ImageGen(merged)
+    return _INSTANCES[key]
 
 
 if __name__ == "__main__":
-    # Smoke test: paint one room backdrop to the cache and print its path.
+    # Smoke test: paint one backdrop to the cache and print its path.
     import argparse
 
     ap = argparse.ArgumentParser()
@@ -182,7 +204,8 @@ if __name__ == "__main__":
     ap.add_argument("--model-dir", default="/workspace/models/sdxl-turbo-onnx")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
-    g = configure({"model_dir": args.model_dir})
+    configure({"by_lang": {"en": {"model_dir": args.model_dir}}})
+    g = instance("en")
     print("available:", g.available())
     name = g.generate(args.prompt)
     print("result:", name, "->", os.path.join(g.cache_dir, name) if name else "(none)")

@@ -45,14 +45,6 @@ AVATAR_EMOJI = ["💼", "🔑", "🔬", "🥃", "📋"]
 # the phase at zero (~20 min total game at the default).
 SECONDS_PER_MIN = 20
 
-# The five fixed faces are the same people in every language, so portraits are
-# painted from the canonical (English) character descriptions and keyed by cast
-# index — one stable, globally-cached face set regardless of the game language.
-try:
-    _ENG_CHARS = load_case(os.path.join(HERE, "case.yaml")).get("characters", [])
-except Exception:
-    _ENG_CHARS = []
-
 
 def _safe_provider(cfg_block):
     """Build a provider, falling back to mock if it can't initialize."""
@@ -129,7 +121,7 @@ class WebGame:
         self.faces: dict[str, str | None] = {}        # npc name -> filename
         self.item_images: dict[str, str | None] = {}  # item name -> filename
         self.images_done = False
-        gen = imagegen.instance()
+        gen = imagegen.instance(self.lang)   # EN -> SDXL, ZH -> Hunyuan
         self.art_enabled = bool(gen and gen.available())
 
         # Everything heavy runs off the request path, behind the intro.
@@ -179,7 +171,7 @@ class WebGame:
 
     # ---- background art painting -----------------------------------
     def _paint_all(self):
-        gen = imagegen.instance()
+        gen = imagegen.instance(self.lang)   # EN -> SDXL, ZH -> Hunyuan
         if not gen:
             return
         # Backdrops, in play order so the first room is ready first.
@@ -188,9 +180,11 @@ class WebGame:
             fn = gen.generate(manifest.get("prompt", "")) if manifest else None
             with self._img_lock:
                 self.backdrops[act["act"]] = fn
-        # The five fixed faces, keyed by cast index to the canonical descriptions.
+        # The five suspects — painted from this game's (localized) character
+        # descriptions, so a Chinese game prompts Hunyuan in Chinese.
+        chars = self.case.get("characters", [])
         for i, name in enumerate(self.names):
-            src = _ENG_CHARS[i] if i < len(_ENG_CHARS) else None
+            src = chars[i] if i < len(chars) else None
             fn = gen.generate(rooms.portrait_prompt(src)) if src else None
             with self._img_lock:
                 self.faces[name] = fn

@@ -54,14 +54,25 @@ costs:
 # manifest, never from the picture.
 images:
   enabled: true
-  model_dir: /workspace/models/sdxl-turbo-onnx   # exported SDXL-Turbo ONNX
   idmc_path: /workspace                           # holds inference_driven_model_compiler
   provider: CUDAExecutionProvider                 # falls back to no-art if it can't load
   cache_dir: webui/assets/cache                   # served at /assets/cache/<name>
-  style: >-
-    moody noir painted illustration, dramatic candlelight, deep shadows,
-    point-and-click adventure game art, cinematic, atmospheric
-  width: 512
-  height: 512
-  steps: 1            # SDXL-Turbo is a 1-step distilled model
-  guidance: 0.0
+  # One model per language: English -> SDXL-Turbo (English prompts), Chinese ->
+  # Hunyuan-DiT (Chinese prompts, its strength). Each is loaded lazily on first use.
+  by_lang:
+    en:
+      model_dir: /workspace/models/sdxl-turbo-onnx
+      width: 512
+      height: 512
+      steps: 1          # SDXL-Turbo is a 1-step distilled model
+      guidance: 0.0
+      style: >-
+        moody noir painted illustration, dramatic candlelight, deep shadows,
+        point-and-click adventure game art, cinematic, atmospheric
+    zh:
+      model_dir: /dev/shm/hunyuan-onnx   # ephemeral: re-export on instance restart
+      width: 1024       # Hunyuan was exported at a fixed 1024x1024
+      height: 1024
+      steps: 20
+      guidance: 6.0
+      style: 电影感的暗调氛围，烛光，写实，精致细节，无文字
