@@ -61,14 +61,36 @@ Generation is **hidden behind the scenario intro** (a background thread paints
 while you read), **cached** on disk (so the marginal cost trends to zero), and
 **entirely optional**: if the model or a GPU is unavailable, generation is
 skipped and the UI falls back to plain backdrops — exactly like the mock-LLM
-fallback. Configure it under `images:` in `config.yaml` (model path, style,
-size). Art needs the exported SDXL-Turbo ONNX plus `onnxruntime-gpu`; the core
-game (CLI and classic UI) needs none of that.
+fallback. Art needs `onnxruntime-gpu`; the core game (CLI and classic UI) needs
+none of that.
 
 ```bash
 pip install flask pyyaml
 python web.py                 # http://127.0.0.1:17080  (Phaser UI with art)
 ```
+
+### One model per language
+
+`config.yaml`'s `images.by_lang` maps each language to its own exported ONNX
+model — each is loaded lazily, so an English game never loads the Chinese model:
+
+| Language | Model | Location |
+|---|---|---|
+| English | SDXL-Turbo (512, English prompts) | `/workspace/models/sdxl-turbo-onnx` |
+| 中文 | Hunyuan-DiT (1024, Chinese prompts) | `/dev/shm/hunyuan-onnx` |
+
+Both are produced by the sibling `inference_driven_model_compiler` inference-driven
+export. They're large (SDXL ~7 GB, Hunyuan ~22 GB), so they aren't in git; restore
+them from their (private) Hugging Face repos instead of re-exporting:
+
+```bash
+huggingface-cli login          # token with read access to the repos
+./restore_models.sh            # downloads both to the paths above
+```
+
+The Hunyuan dir is under `/dev/shm` (RAM-backed) — re-run `restore_models.sh`
+after an instance restart. If a model is missing, that language just falls back
+to plain backdrops.
 
 ## Language / 语言
 
