@@ -37,6 +37,10 @@
   .bub.you{ background:#23303a; margin-left:auto; }
   .bub.npc{ background:#241f18; }
   .who{ font-size:12px; color:var(--dim); margin:2px 2px 0; }
+  .bub.typing{ color:var(--dim); }
+  .dots i{ font-style:normal; animation:blink 1s infinite; }
+  .dots i:nth-child(2){ animation-delay:.2s } .dots i:nth-child(3){ animation-delay:.4s }
+  @keyframes blink{ 0%,100%{opacity:.2} 50%{opacity:1} }
   .evchip{ display:inline-block; margin:3px; padding:5px 9px; border:1px solid var(--line);
     border-radius:999px; background:#1a1610; font-size:13px; cursor:pointer; }
   .evchip:hover{ border-color:var(--accent); }
@@ -64,7 +68,7 @@
     <div class="row">
       <input id="chatInput" placeholder="Ask a question…" style="flex:1"
              onkeydown="if(event.key==='Enter')sendChat()"/>
-      <button class="btn primary" onclick="sendChat()">Ask</button>
+      <button id="chatAsk" class="btn primary" onclick="sendChat()">Ask</button>
     </div>
   </div></div>
 
@@ -208,7 +212,7 @@ class IntroScene extends Phaser.Scene {
 // ============================ Play (the world) =============================
 // Scene world is a square the camera roams (the painting is square). Big enough
 // to pan/zoom into; the painting upscales to fill it.
-let SW = Math.round(Math.max(W, H) * 1.25);
+let SW = Math.round(Math.max(W, H) * 1.6);
 
 class PlayScene extends Phaser.Scene {
   constructor(){ super('Play'); }
@@ -217,14 +221,17 @@ class PlayScene extends Phaser.Scene {
     const cam=this.cameras.main;
     cam.setBackgroundColor('#0c0a08');
     // drag-to-pan (only while exploring; ignored over fixed UI clicks)
-    this.input.on('pointerdown', p=>{ this._d={x:p.x,y:p.y,sx:cam.scrollX,sy:cam.scrollY}; this._dragged=false; });
+    this.input.on('pointerdown', p=>{
+      this._d={x:p.x,y:p.y,sx:cam.scrollX,sy:cam.scrollY}; this._dragged=false;
+      if(this.explore) this.input.setDefaultCursor('grabbing');
+    });
     this.input.on('pointermove', p=>{
       if(!this.explore || !p.isDown || !this._d) return;
       const dx=p.x-this._d.x, dy=p.y-this._d.y;
       if(Math.abs(dx)+Math.abs(dy)>6) this._dragged=true;
       cam.scrollX=this._d.sx-dx/cam.zoom; cam.scrollY=this._d.sy-dy/cam.zoom;
     });
-    this.input.on('pointerup', ()=>{ this._d=null; });
+    this.input.on('pointerup', ()=>{ this._d=null; if(this.explore) this.input.setDefaultCursor('grab'); });
     this.input.on('wheel', (p,go,dx,dy)=>{ if(this.explore) this.zoomBy(dy>0?0.88:1.14); });
     // Separate UI camera that never pans/zooms, so chrome stays put while the
     // main camera roams the scene.
@@ -232,7 +239,7 @@ class PlayScene extends Phaser.Scene {
     this.worldObjs=[]; this.uiObjs=[];
     this.loadAndBuild();
   }
-  zoomBy(f){ const c=this.cameras.main; c.setZoom(Phaser.Math.Clamp(c.zoom*f, this.minZoom, 2.8)); }
+  zoomBy(f){ const c=this.cameras.main; c.setZoom(Phaser.Math.Clamp(c.zoom*f, this.minZoom||0.5, 3.4)); }
 
   texKey(url){ return 'tex_'+url.replace(/\W/g,'_'); }
   needTextures(){
@@ -262,13 +269,22 @@ class PlayScene extends Phaser.Scene {
     const st=G.state, img=st.images||{}, kind=st.phase_kind;
     const cam=this.cameras.main;
     cam.setSize(W,H); this.uiCam.setSize(W,H);   // track full-page canvas
+    // Reset the per-phase hint state when the phase changes.
+    const phaseKey=`${st.act_num}-${st.phase_index}`;
+    const newPhase=(this._phaseKey!==phaseKey);
+    if(newPhase){ this._phaseKey=phaseKey; this.hinted=false; this.hintSpots=[]; }
 
     if(kind==='search'){
       // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
       this.explore=true;
       cam.setBounds(0,0,SW,SW);
-      cam.setZoom(W/SW);            // start filling the view; zoom out to see all
+      // Start zoomed in past the fit point so the picture overflows the window
+      // in both axes — there is always room to drag it around. Zoom out (−) to
+      // see more; the floor keeps the whole scene reachable.
+      this.minZoom = Math.max(W,H)/SW;
+      cam.setZoom(this.minZoom * 1.4);
       cam.centerOn(SW/2, SW/2);
+      this.input.setDefaultCursor('grab');
       if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
         this.world(this.add.image(0,0,this.texKey(img.backdrop)).setOrigin(0).setDisplaySize(SW,SW));
       } else {
@@ -281,16 +297,29 @@ class PlayScene extends Phaser.Scene {
         const p=chips[sp.id]||{x:0.5,y:0.6};
         const zx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW;
         const zy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
-        const z=this.world(this.add.zone(zx,zy,150,150).setInteractive({useHandCursor:true}));
+        // No useHandCursor — the cursor must not betray where the hidden spots are.
+        const z=this.world(this.add.zone(zx,zy,150,150).setInteractive());
         z.on('pointerup',()=>{
           if(this._dragged) return;
           if(!sp.searched) doSearch(sp.id);
           else if((sp.found||[]).length) showSpotResult(sp);
         });
       });
+      // Last-resort hint: gentle glows on the spots /api/hint returned (only the
+      // ones still unsearched). Appears only when the timer triggers requestHint.
+      const searchedIds=new Set((st.spots||[]).filter(s=>s.searched).map(s=>s.id));
+      (this.hintSpots||[]).forEach(id=>{
+        if(searchedIds.has(id)) return;
+        const p=(img.chips||{})[id]||{x:0.5,y:0.6};
+        const gx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW, gy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
+        const glow=this.world(this.add.circle(gx,gy,60,0xc9a14a,0.16).setStrokeStyle(3,0xc9a14a,0.6));
+        this.tweens.add({targets:glow, scale:1.6, alpha:0.05, duration:1100,
+          yoyo:true, repeat:-1, ease:'Sine.inOut'});
+      });
     } else {
       // ---- talk / accuse / over: fixed framing ----
       this.explore=false;
+      this.input.setDefaultCursor('default');
       cam.setBounds(0,0,W,H); cam.setZoom(1); cam.centerOn(W/2,H/2);
       if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
         const bd=this.world(this.add.image(W/2, TOP_H/2, this.texKey(img.backdrop)));
@@ -313,7 +342,9 @@ class PlayScene extends Phaser.Scene {
     fix(this.add.text(W-12,10, `${kindLabel}  ·  phase ${st.phase_index}/${st.phase_total}`,
       {fontSize:'14px',color:'#c9a14a'}).setOrigin(1,0));
     this.timerText=fix(this.add.text(W/2,10,'',{fontSize:'14px',color:'#bcb3a3'}).setOrigin(.5,0));
-    this.startTimer(st.phase_seconds||0);
+    // Only (re)start the countdown on a real phase change — a rebuild (search,
+    // hint glow, resize) must NOT reset the clock; just repaint the current value.
+    if(newPhase) this.startTimer(st.phase_seconds||0); else this.renderTimer();
 
     // evidence + next (fixed)
     fix(this.add.text(20,H-34, `🗂 ${(st.evidence||[]).length}`, {fontSize:'16px',color:'#bcb3a3'})
@@ -367,17 +398,36 @@ class PlayScene extends Phaser.Scene {
     return g;
   }
 
+  renderTimer(){
+    if(!this.timerText) return;
+    const r=Math.max(0, this.remaining||0), m=Math.floor(r/60), s=r%60;
+    this.timerText.setText(r>0 ? `⏳ ${m}:${String(s).padStart(2,'0')}` : '');
+  }
   startTimer(secs){
     this.remaining=secs;
+    this.hintAt=Math.max(60, Math.round(secs*0.25));  // last ~quarter / 60s
     if(this.tick) this.tick.remove();
-    const render=()=>{ const m=Math.floor(this.remaining/60), s=this.remaining%60;
-      this.timerText.setText(this.remaining>0?`⏳ ${m}:${String(s).padStart(2,'0')}`:''); };
-    render();
+    this.renderTimer();
     if(secs>0){
       this.tick=this.time.addEvent({delay:1000,loop:true,callback:()=>{
-        this.remaining--; render();
+        this.remaining--; this.renderTimer();
+        // Running low and still short of two clues? Offer a hint (once).
+        if(this.explore && !this.hinted && this.remaining<=this.hintAt && this.foundCount()<2){
+          this.hinted=true; this.requestHint();
+        }
         if(this.remaining<=0){ this.tick.remove(); doNext(); }
       }});
+    }
+  }
+
+  foundCount(){ return (G.state.spots||[]).reduce((n,s)=>n+((s.found||[]).length),0); }
+
+  async requestHint(){
+    const r=await api('/hint',{});
+    if(r && Array.isArray(r.spots) && r.spots.length){
+      this.hintSpots=r.spots;
+      this.build();
+      toast('Time is short — a couple of details seem worth a closer look.');
     }
   }
 }
@@ -418,22 +468,53 @@ function openChat(name){
   showOverlay('chat');
   setTimeout(()=>document.getElementById('chatInput').focus(),50);
 }
+function bubbleHTML(who,html,cls){
+  return `<div class="who" style="${who==='you'?'text-align:right':''}">${who==='you'?'You':chatName}</div>`+
+         `<div class="bub ${who==='you'?'you':'npc'}${cls||''}">${html}</div>`;
+}
 function renderChat(c){
   const log=document.getElementById('chatLog');
-  log.innerHTML=(c.chat||[]).map(m=>
-    `<div class="who" style="${m.who==='you'?'text-align:right':''}">${m.who==='you'?'You':c.name}</div>`+
-    `<div class="bub ${m.who==='you'?'you':'npc'}">${escapeHtml(m.text)}</div>`).join('');
+  log.innerHTML=(c.chat||[]).map(m=>bubbleHTML(m.who, escapeHtml(m.text))).join('');
+  log.scrollTop=log.scrollHeight;
+}
+function chatBusy(on){
+  const inp=document.getElementById('chatInput'); inp.disabled=on;
+  const ask=document.getElementById('chatAsk'); if(ask) ask.disabled=on;
+  const ev=document.getElementById('chatEv'); if(ev) ev.style.pointerEvents=on?'none':'';
+}
+// Optimistic feedback: echo the player's line and a typing indicator instantly,
+// so the (unavoidable) model round-trip doesn't feel frozen.
+function showThinking(youText){
+  const log=document.getElementById('chatLog');
+  log.insertAdjacentHTML('beforeend', bubbleHTML('you', escapeHtml(youText)));
+  log.insertAdjacentHTML('beforeend',
+    bubbleHTML('npc', '<span class="dots"><i>.</i><i>.</i><i>.</i></span>', ' typing'));
   log.scrollTop=log.scrollHeight;
 }
 async function sendChat(){
   const inp=document.getElementById('chatInput'); const text=inp.value.trim(); if(!text) return;
-  inp.value=''; const r=await api('/talk',{name:chatName,text}); G.state=r;
-  if(r.action&&r.action.error){ toast('Cannot ask now'); }
-  const c=(r.cast||[]).find(x=>x.name===chatName); renderChat(c); playScene().build();
+  inp.value=''; showThinking(text); chatBusy(true);
+  try{
+    const r=await api('/talk',{name:chatName,text});
+    if(r && r.cast){ G.state=r; }
+    if(r && r.action && r.action.error){ toast('Cannot ask now'); }
+  } catch(e){ toast('That didn’t go through — try again.'); }
+  finally{
+    chatBusy(false);
+    const c=(G.state.cast||[]).find(x=>x.name===chatName); renderChat(c);
+    document.getElementById('chatInput').focus();
+  }
 }
 async function showEv(item){
-  const r=await api('/show',{name:chatName,item}); G.state=r;
-  const c=(r.cast||[]).find(x=>x.name===chatName); renderChat(c); playScene().build();
+  showThinking('▸ '+item); chatBusy(true);
+  try{
+    const r=await api('/show',{name:chatName,item});
+    if(r && r.cast){ G.state=r; }
+  } catch(e){ toast('That didn’t go through — try again.'); }
+  finally{
+    chatBusy(false);
+    const c=(G.state.cast||[]).find(x=>x.name===chatName); renderChat(c);
+  }
 }
 
 function openEvidence(){
@@ -499,11 +580,13 @@ const game = new Phaser.Game({
   scene:[StartScene, IntroScene, PlayScene]
 });
 
+window.game = game;   // expose for debugging
+
 // Keep the global dimensions in sync with the canvas and re-lay-out on resize.
 function applySize(w,h){
   W=Math.round(w); H=Math.round(h);
   TOP_H=Math.max(360, H-190);
-  SW=Math.round(Math.max(W,H)*1.25);
+  SW=Math.round(Math.max(W,H)*1.6);
 }
 game.scale.on('resize', (sz)=>{
   applySize(sz.width, sz.height);

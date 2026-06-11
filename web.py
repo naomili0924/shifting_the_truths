@@ -311,6 +311,10 @@ class WebGame:
             return {"error": "not_talk"}
         if name not in self.names:
             return {"error": "bad_name"}
+        if name not in self.base_prompt:
+            return {"ok": True,
+                    "reply": self.L["web"].get("suspects_arriving",
+                                               "The suspects are still gathering — try again in a moment.")}
         item = next((e for e in self.evidence if e["name"] == item_name), None)
         if not item:
             return {"error": "no_item"}
@@ -320,6 +324,30 @@ class WebGame:
         reply = self._npc_reply(name, msg)
         self.chat[name].append({"who": "npc", "text": reply})
         return {"ok": True, "reply": reply}
+
+    def hint(self):
+        """Last-resort help: return up to (2 - found) UNSEARCHED spots in the
+        current search that actually contain a present item, so the player can
+        reach at least two clues. Reveals only the minimum needed."""
+        if not self.ready:
+            return {"spots": []}
+        cur = self._cur()
+        if not cur or cur["phase"]["type"] != "search":
+            return {"spots": []}
+        act = cur["act"]
+        found_ct = sum(len(self.found.get(s["id"], [])) for s in act["spots"])
+        need = max(0, 2 - found_ct)
+        if need <= 0:
+            return {"spots": []}
+        targets = []
+        for s in act["spots"]:
+            if s["id"] in self.searched:
+                continue
+            if any(item_present(i, self.gt) for i in s.get("items", [])):
+                targets.append(s["id"])
+            if len(targets) >= need:
+                break
+        return {"spots": targets}
 
     def next_phase(self):
         if not self.ready:
@@ -537,6 +565,14 @@ def api_show():
     d = request.get_json(silent=True) or {}
     r = g.show(d.get("name", ""), d.get("item", ""))
     return _respond(g, {"action": r})
+
+
+@app.post("/api/hint")
+def api_hint():
+    sid, g = _game()
+    if not g:
+        return jsonify({"error": "no_session"}), 404
+    return jsonify(g.hint())
 
 
 @app.post("/api/next")
