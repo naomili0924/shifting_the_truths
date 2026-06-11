@@ -271,7 +271,8 @@ class PlayScene extends Phaser.Scene {
     cam.setSize(W,H); this.uiCam.setSize(W,H);   // track full-page canvas
     // Reset the per-phase hint state when the phase changes.
     const phaseKey=`${st.act_num}-${st.phase_index}`;
-    if(this._phaseKey!==phaseKey){ this._phaseKey=phaseKey; this.hinted=false; this.hintSpots=[]; }
+    const newPhase=(this._phaseKey!==phaseKey);
+    if(newPhase){ this._phaseKey=phaseKey; this.hinted=false; this.hintSpots=[]; }
 
     if(kind==='search'){
       // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
@@ -341,7 +342,9 @@ class PlayScene extends Phaser.Scene {
     fix(this.add.text(W-12,10, `${kindLabel}  ·  phase ${st.phase_index}/${st.phase_total}`,
       {fontSize:'14px',color:'#c9a14a'}).setOrigin(1,0));
     this.timerText=fix(this.add.text(W/2,10,'',{fontSize:'14px',color:'#bcb3a3'}).setOrigin(.5,0));
-    this.startTimer(st.phase_seconds||0);
+    // Only (re)start the countdown on a real phase change — a rebuild (search,
+    // hint glow, resize) must NOT reset the clock; just repaint the current value.
+    if(newPhase) this.startTimer(st.phase_seconds||0); else this.renderTimer();
 
     // evidence + next (fixed)
     fix(this.add.text(20,H-34, `🗂 ${(st.evidence||[]).length}`, {fontSize:'16px',color:'#bcb3a3'})
@@ -395,16 +398,19 @@ class PlayScene extends Phaser.Scene {
     return g;
   }
 
+  renderTimer(){
+    if(!this.timerText) return;
+    const r=Math.max(0, this.remaining||0), m=Math.floor(r/60), s=r%60;
+    this.timerText.setText(r>0 ? `⏳ ${m}:${String(s).padStart(2,'0')}` : '');
+  }
   startTimer(secs){
     this.remaining=secs;
     this.hintAt=Math.max(60, Math.round(secs*0.25));  // last ~quarter / 60s
     if(this.tick) this.tick.remove();
-    const render=()=>{ const m=Math.floor(this.remaining/60), s=this.remaining%60;
-      this.timerText.setText(this.remaining>0?`⏳ ${m}:${String(s).padStart(2,'0')}`:''); };
-    render();
+    this.renderTimer();
     if(secs>0){
       this.tick=this.time.addEvent({delay:1000,loop:true,callback:()=>{
-        this.remaining--; render();
+        this.remaining--; this.renderTimer();
         // Running low and still short of two clues? Offer a hint (once).
         if(this.explore && !this.hinted && this.remaining<=this.hintAt && this.foundCount()<2){
           this.hinted=true; this.requestHint();
