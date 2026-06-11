@@ -265,6 +265,9 @@ class PlayScene extends Phaser.Scene {
     const st=G.state, img=st.images||{}, kind=st.phase_kind;
     const cam=this.cameras.main;
     cam.setSize(W,H); this.uiCam.setSize(W,H);   // track full-page canvas
+    // Reset the per-phase hint state when the phase changes.
+    const phaseKey=`${st.act_num}-${st.phase_index}`;
+    if(this._phaseKey!==phaseKey){ this._phaseKey=phaseKey; this.hinted=false; this.hintSpots=[]; }
 
     if(kind==='search'){
       // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
@@ -296,6 +299,17 @@ class PlayScene extends Phaser.Scene {
           if(!sp.searched) doSearch(sp.id);
           else if((sp.found||[]).length) showSpotResult(sp);
         });
+      });
+      // Last-resort hint: gentle glows on the spots /api/hint returned (only the
+      // ones still unsearched). Appears only when the timer triggers requestHint.
+      const searchedIds=new Set((st.spots||[]).filter(s=>s.searched).map(s=>s.id));
+      (this.hintSpots||[]).forEach(id=>{
+        if(searchedIds.has(id)) return;
+        const p=(img.chips||{})[id]||{x:0.5,y:0.6};
+        const gx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW, gy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
+        const glow=this.world(this.add.circle(gx,gy,60,0xc9a14a,0.16).setStrokeStyle(3,0xc9a14a,0.6));
+        this.tweens.add({targets:glow, scale:1.6, alpha:0.05, duration:1100,
+          yoyo:true, repeat:-1, ease:'Sine.inOut'});
       });
     } else {
       // ---- talk / accuse / over: fixed framing ----
@@ -379,6 +393,7 @@ class PlayScene extends Phaser.Scene {
 
   startTimer(secs){
     this.remaining=secs;
+    this.hintAt=Math.max(60, Math.round(secs*0.25));  // last ~quarter / 60s
     if(this.tick) this.tick.remove();
     const render=()=>{ const m=Math.floor(this.remaining/60), s=this.remaining%60;
       this.timerText.setText(this.remaining>0?`⏳ ${m}:${String(s).padStart(2,'0')}`:''); };
@@ -386,8 +401,23 @@ class PlayScene extends Phaser.Scene {
     if(secs>0){
       this.tick=this.time.addEvent({delay:1000,loop:true,callback:()=>{
         this.remaining--; render();
+        // Running low and still short of two clues? Offer a hint (once).
+        if(this.explore && !this.hinted && this.remaining<=this.hintAt && this.foundCount()<2){
+          this.hinted=true; this.requestHint();
+        }
         if(this.remaining<=0){ this.tick.remove(); doNext(); }
       }});
+    }
+  }
+
+  foundCount(){ return (G.state.spots||[]).reduce((n,s)=>n+((s.found||[]).length),0); }
+
+  async requestHint(){
+    const r=await api('/hint',{});
+    if(r && Array.isArray(r.spots) && r.spots.length){
+      this.hintSpots=r.spots;
+      this.build();
+      toast('Time is short — a couple of details seem worth a closer look.');
     }
   }
 }
