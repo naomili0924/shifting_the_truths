@@ -36,6 +36,40 @@ accusation. It runs without an API key (suspects give canned replies via
 the mock provider) and uses real models the moment a key/local model is
 configured — `web.py` falls back to mock if a provider can't initialize.
 
+## Painted UI (Phaser + generated art)
+
+The browser UI at `/` is a **Phaser** point-and-click adventure with art
+generated on the fly by a local **SDXL-Turbo ONNX** model (exported by the
+sibling `inference_driven_model_compiler` project). The original text/click UI
+is still available at `/classic`.
+
+**Manifest first, paint second.** The room's searchable structure — which spots
+exist, which items hide where — is the manifest (authored in `case.yaml`,
+resolved against the rolled plot, and the judge writes each room's visual layout
+per run, verified). *Only then* is the image model called with a prompt built
+from that manifest. Game logic never depends on what the picture contains, so:
+
+- **Backdrops** are painted per room from the manifest's prompt.
+- **Hotspots are chips, not pixels** — each searchable spot is a labeled button
+  nudged toward roughly the right spot; if the model painted the desk elsewhere,
+  nothing breaks.
+- **Items** found in a search are painted as object cards.
+- **Five fixed faces** (the suspects) are painted once and cached, reused every
+  run — the cast is constant, only the rooms re-roll.
+
+Generation is **hidden behind the scenario intro** (a background thread paints
+while you read), **cached** on disk (so the marginal cost trends to zero), and
+**entirely optional**: if the model or a GPU is unavailable, generation is
+skipped and the UI falls back to plain backdrops — exactly like the mock-LLM
+fallback. Configure it under `images:` in `config.yaml` (model path, style,
+size). Art needs the exported SDXL-Turbo ONNX plus `onnxruntime-gpu`; the core
+game (CLI and classic UI) needs none of that.
+
+```bash
+pip install flask pyyaml
+python web.py                 # http://127.0.0.1:17080  (Phaser UI with art)
+```
+
 ## Language / 语言
 
 The player picks the language; English stays the default and is never
@@ -160,4 +194,7 @@ of play with no spoilers. The `logs/` directory is gitignored.
 - `gamelog.py` — session logging (production / developer modes)
 - `main.py` — the act/phase game loop (CLI)
 - `web.py` — Flask backend for the browser UI (one session per browser)
-- `webui/index.html` — the single-page web client (avatars, chat, search)
+- `rooms.py` — visual room manifest: judge-authored layout + image prompts (verified, deterministic fallback)
+- `imagegen.py` — optional cached SDXL-Turbo ONNX backdrop/portrait/item painter (graceful no-art fallback)
+- `webui/game.html` — the Phaser point-and-click client (painted backdrops, chip hotspots, faces)
+- `webui/index.html` — the original single-page web client (served at `/classic`)

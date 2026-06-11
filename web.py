@@ -21,11 +21,14 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import threading
 import uuid
 
 import yaml
 from flask import Flask, request, jsonify, send_from_directory
 
+import imagegen
+import rooms
 from providers import provider_from_config, MockProvider
 from i18n import t, normalize_lang
 from engine import (
@@ -41,6 +44,14 @@ AVATAR_EMOJI = ["💼", "🔑", "🔬", "🥃", "📋"]
 # phase budget is worth. The client ticks this down live and auto-ends
 # the phase at zero (~20 min total game at the default).
 SECONDS_PER_MIN = 20
+
+# The five fixed faces are the same people in every language, so portraits are
+# painted from the canonical (English) character descriptions and keyed by cast
+# index — one stable, globally-cached face set regardless of the game language.
+try:
+    _ENG_CHARS = load_case(os.path.join(HERE, "case.yaml")).get("characters", [])
+except Exception:
+    _ENG_CHARS = []
 
 
 def _safe_provider(cfg_block):
@@ -107,6 +118,70 @@ class WebGame:
                 "color": AVATAR_COLORS[i % len(AVATAR_COLORS)],
                 "emoji": AVATAR_EMOJI[i % len(AVATAR_EMOJI)]}
             for i, n in enumerate(self.names)
+        }
+
+        # ---- visual manifest (data first) + background painting (paint second) ----
+        # Build each act's room manifest now (judge-authored layout, verified, with
+        # a deterministic fallback), then paint backdrops + the fixed faces in a
+        # background thread so the latency hides behind the scenario intro.
+        self.room_manifests = {
+            act["act"]: rooms.judge_room_layout(self.case, act, self.judge_llm, self.lang)
+            for act in self.case["acts"]
+        }
+        self._img_lock = threading.Lock()
+        self.backdrops: dict[int, str | None] = {}   # act_num -> filename
+        self.faces: dict[str, str | None] = {}        # npc name -> filename
+        self.item_images: dict[str, str | None] = {}  # item name -> filename
+        self.images_done = False
+        gen = imagegen.instance()
+        self.art_enabled = bool(gen and gen.available())
+        if self.art_enabled:
+            threading.Thread(target=self._paint_all, daemon=True).start()
+
+    # ---- background art painting -----------------------------------
+    def _paint_all(self):
+        gen = imagegen.instance()
+        if not gen:
+            return
+        # Backdrops, in play order so the first room is ready first.
+        for act in self.case["acts"]:
+            manifest = self.room_manifests.get(act["act"], {})
+            fn = gen.generate(manifest.get("prompt", "")) if manifest else None
+            with self._img_lock:
+                self.backdrops[act["act"]] = fn
+        # The five fixed faces, keyed by cast index to the canonical descriptions.
+        for i, name in enumerate(self.names):
+            src = _ENG_CHARS[i] if i < len(_ENG_CHARS) else None
+            fn = gen.generate(rooms.portrait_prompt(src)) if src else None
+            with self._img_lock:
+                self.faces[name] = fn
+        # Items that are actually present in this rolled plot (manifest first).
+        for act in self.case["acts"]:
+            for spot in act.get("spots", []):
+                for item in spot.get("items", []):
+                    if not item_present(item, self.gt):
+                        continue
+                    fn = gen.generate(rooms.item_prompt(item))
+                    with self._img_lock:
+                        self.item_images[item["name"]] = fn
+        with self._img_lock:
+            self.images_done = True
+
+    def _image_state(self):
+        cur = self._cur()
+        act_num = cur["act"]["act"] if cur else None
+        with self._img_lock:
+            backdrop = self.backdrops.get(act_num) if act_num else None
+            faces = dict(self.faces)
+            done = self.images_done
+        manifest = self.room_manifests.get(act_num, {}) if act_num else {}
+        return {
+            "art_enabled": self.art_enabled,
+            "images_done": done,
+            "backdrop": f"/assets/cache/{backdrop}" if backdrop else None,
+            "faces": {n: (f"/assets/cache/{fn}" if fn else None)
+                      for n, fn in faces.items()},
+            "chips": manifest.get("spots", {}),
         }
 
     # ---- director selector (judge picks culprit) --------------------
@@ -257,6 +332,14 @@ class WebGame:
         act = cur["act"] if cur else None
         phase_seconds = (int(cur["phase"]["time"]) * SECONDS_PER_MIN
                          if cur else 0)
+        def _with_img(items):
+            out = []
+            for it in items:
+                fn = self.item_images.get(it["name"])
+                out.append({**it,
+                            "image": f"/assets/cache/{fn}" if fn else None})
+            return out
+
         spots = []
         if act:
             for s in act["spots"]:
@@ -264,7 +347,7 @@ class WebGame:
                     "id": s["id"], "name": s["name"],
                     "empty_text": s.get("empty_text", self.L["web"]["found_nothing"]),
                     "searched": s["id"] in self.searched,
-                    "found": self.found.get(s["id"], []),
+                    "found": _with_img(self.found.get(s["id"], [])),
                 })
         cast = []
         for n in self.names:
@@ -293,8 +376,9 @@ class WebGame:
             "phase_seconds": phase_seconds,
             "spots": spots,
             "cast": cast,
-            "evidence": self.evidence,
+            "evidence": _with_img(self.evidence),
             "verdict": self.verdict,
+            "images": self._image_state(),
         }
 
 
@@ -310,6 +394,17 @@ def _load_cfg():
         return yaml.safe_load(f)
 
 
+# Configure the (optional) image generator once at import, from config.yaml.
+try:
+    _CFG = _load_cfg()
+    _imgcfg = dict(_CFG.get("images") or {})
+    if _imgcfg.get("cache_dir") and not os.path.isabs(_imgcfg["cache_dir"]):
+        _imgcfg["cache_dir"] = os.path.join(HERE, _imgcfg["cache_dir"])
+    imagegen.configure(_imgcfg)
+except Exception:
+    imagegen.configure({"enabled": False})
+
+
 def _game():
     sid = request.headers.get("X-Session")
     if not sid:
@@ -319,6 +414,13 @@ def _game():
 
 @app.get("/")
 def index():
+    # Phaser point-and-click UI with generated art is the primary experience.
+    return send_from_directory(os.path.join(HERE, "webui"), "game.html")
+
+
+@app.get("/classic")
+def classic():
+    # The original text/click single-page UI is still available.
     return send_from_directory(os.path.join(HERE, "webui"), "index.html")
 
 
@@ -343,6 +445,15 @@ def _respond(g, extra=None):
     if extra:
         state.update(extra)
     return jsonify(state)
+
+
+@app.post("/api/state")
+def api_state():
+    """Lightweight poll — returns current state (used to await painted art)."""
+    sid, g = _game()
+    if not g:
+        return jsonify({"error": "no_session"}), 404
+    return _respond(g)
 
 
 @app.post("/api/search")
