@@ -208,7 +208,7 @@ class IntroScene extends Phaser.Scene {
 // ============================ Play (the world) =============================
 // Scene world is a square the camera roams (the painting is square). Big enough
 // to pan/zoom into; the painting upscales to fill it.
-let SW = Math.round(Math.max(W, H) * 1.25);
+let SW = Math.round(Math.max(W, H) * 1.6);
 
 class PlayScene extends Phaser.Scene {
   constructor(){ super('Play'); }
@@ -217,14 +217,17 @@ class PlayScene extends Phaser.Scene {
     const cam=this.cameras.main;
     cam.setBackgroundColor('#0c0a08');
     // drag-to-pan (only while exploring; ignored over fixed UI clicks)
-    this.input.on('pointerdown', p=>{ this._d={x:p.x,y:p.y,sx:cam.scrollX,sy:cam.scrollY}; this._dragged=false; });
+    this.input.on('pointerdown', p=>{
+      this._d={x:p.x,y:p.y,sx:cam.scrollX,sy:cam.scrollY}; this._dragged=false;
+      if(this.explore) this.input.setDefaultCursor('grabbing');
+    });
     this.input.on('pointermove', p=>{
       if(!this.explore || !p.isDown || !this._d) return;
       const dx=p.x-this._d.x, dy=p.y-this._d.y;
       if(Math.abs(dx)+Math.abs(dy)>6) this._dragged=true;
       cam.scrollX=this._d.sx-dx/cam.zoom; cam.scrollY=this._d.sy-dy/cam.zoom;
     });
-    this.input.on('pointerup', ()=>{ this._d=null; });
+    this.input.on('pointerup', ()=>{ this._d=null; if(this.explore) this.input.setDefaultCursor('grab'); });
     this.input.on('wheel', (p,go,dx,dy)=>{ if(this.explore) this.zoomBy(dy>0?0.88:1.14); });
     // Separate UI camera that never pans/zooms, so chrome stays put while the
     // main camera roams the scene.
@@ -232,7 +235,7 @@ class PlayScene extends Phaser.Scene {
     this.worldObjs=[]; this.uiObjs=[];
     this.loadAndBuild();
   }
-  zoomBy(f){ const c=this.cameras.main; c.setZoom(Phaser.Math.Clamp(c.zoom*f, this.minZoom, 2.8)); }
+  zoomBy(f){ const c=this.cameras.main; c.setZoom(Phaser.Math.Clamp(c.zoom*f, this.minZoom||0.5, 3.4)); }
 
   texKey(url){ return 'tex_'+url.replace(/\W/g,'_'); }
   needTextures(){
@@ -267,8 +270,13 @@ class PlayScene extends Phaser.Scene {
       // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
       this.explore=true;
       cam.setBounds(0,0,SW,SW);
-      cam.setZoom(W/SW);            // start filling the view; zoom out to see all
+      // Start zoomed in past the fit point so the picture overflows the window
+      // in both axes — there is always room to drag it around. Zoom out (−) to
+      // see more; the floor keeps the whole scene reachable.
+      this.minZoom = Math.max(W,H)/SW;
+      cam.setZoom(this.minZoom * 1.4);
       cam.centerOn(SW/2, SW/2);
+      this.input.setDefaultCursor('grab');
       if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
         this.world(this.add.image(0,0,this.texKey(img.backdrop)).setOrigin(0).setDisplaySize(SW,SW));
       } else {
@@ -281,7 +289,8 @@ class PlayScene extends Phaser.Scene {
         const p=chips[sp.id]||{x:0.5,y:0.6};
         const zx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW;
         const zy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
-        const z=this.world(this.add.zone(zx,zy,150,150).setInteractive({useHandCursor:true}));
+        // No useHandCursor — the cursor must not betray where the hidden spots are.
+        const z=this.world(this.add.zone(zx,zy,150,150).setInteractive());
         z.on('pointerup',()=>{
           if(this._dragged) return;
           if(!sp.searched) doSearch(sp.id);
@@ -291,6 +300,7 @@ class PlayScene extends Phaser.Scene {
     } else {
       // ---- talk / accuse / over: fixed framing ----
       this.explore=false;
+      this.input.setDefaultCursor('default');
       cam.setBounds(0,0,W,H); cam.setZoom(1); cam.centerOn(W/2,H/2);
       if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
         const bd=this.world(this.add.image(W/2, TOP_H/2, this.texKey(img.backdrop)));
@@ -499,11 +509,13 @@ const game = new Phaser.Game({
   scene:[StartScene, IntroScene, PlayScene]
 });
 
+window.game = game;   // expose for debugging
+
 // Keep the global dimensions in sync with the canvas and re-lay-out on resize.
 function applySize(w,h){
   W=Math.round(w); H=Math.round(h);
   TOP_H=Math.max(360, H-190);
-  SW=Math.round(Math.max(W,H)*1.25);
+  SW=Math.round(Math.max(W,H)*1.6);
 }
 game.scale.on('resize', (sz)=>{
   applySize(sz.width, sz.height);
