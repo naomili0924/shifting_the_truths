@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 judge_debug.jsonl
 logs/
+webui/assets/cache/

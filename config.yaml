@@ -46,3 +46,22 @@ costs:
   search: 2           # searching one spot
   question: 1         # one question to a suspect
   show: 1             # showing a piece of evidence
+
+# Generated art for the Phaser web UI (web.py). Optional: if the model or a GPU
+# is unavailable, generation is skipped and the UI falls back to plain backdrops
+# — exactly like the mock-LLM fallback. Manifest first, paint second: the room
+# backdrops are painted from the per-run room manifest, the chips come from the
+# manifest, never from the picture.
+images:
+  enabled: true
+  model_dir: /workspace/models/sdxl-turbo-onnx   # exported SDXL-Turbo ONNX
+  idmc_path: /workspace                           # holds inference_driven_model_compiler
+  provider: CUDAExecutionProvider                 # falls back to no-art if it can't load
+  cache_dir: webui/assets/cache                   # served at /assets/cache/<name>
+  style: >-
+    moody noir painted illustration, dramatic candlelight, deep shadows,
+    point-and-click adventure game art, cinematic, atmospheric
+  width: 512
+  height: 512
+  steps: 1            # SDXL-Turbo is a 1-step distilled model
+  guidance: 0.0
