@@ -188,7 +188,11 @@ class IntroScene extends Phaser.Scene {
   async poll(){
     const s = await api('/state'); if(s && !s.error){ G.state = s; }
     const img = (G.state.images)||{};
-    const ready = !img.art_enabled || img.images_done || img.backdrop;
+    const setup = !!G.state.setup_done;
+    this.note.setText(!setup ? 'Setting the scene…'
+                      : (img.art_enabled && !img.backdrop) ? 'Painting the estate…'
+                      : 'Ready.');
+    const ready = setup && (!img.art_enabled || img.backdrop);
     if(ready && !this.enterBtn){
       this.note.setText(img.art_enabled ? 'The estate is painted.' : 'Art disabled — plain backdrops.');
       this.timer.remove();
