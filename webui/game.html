@@ -264,8 +264,6 @@ class PlayScene extends Phaser.Scene {
         const y=46 + Phaser.Math.Clamp(p.y,0.05,0.95)*(TOP_H-60);
         this.world.add(this.makeHotspot(x,y,sp));
       });
-      this.world.add(this.add.text(W/2,TOP_H-16,'Search the scene — investigate the glowing marks',
-        {fontSize:'13px',color:'#9a9082'}).setOrigin(.5));
     }
 
     // ---- bottom strip: controls (+ faces only when interrogating) ----
@@ -273,9 +271,6 @@ class PlayScene extends Phaser.Scene {
     this.world.add(this.add.line(0,TOP_H,0,0,W,0,0x3a342c).setOrigin(0));
     if(kind==='talk'){
       (st.cast||[]).forEach((c,i)=> this.world.add(this.makeFace(c,i,kind)));
-    } else if(kind==='search'){
-      this.world.add(this.add.text(W/2,TOP_H+60,'The suspects are waiting in the lounge — find what you can first.',
-        {fontSize:'14px',color:'#6f675b'}).setOrigin(.5));
     }
 
     // evidence + next
