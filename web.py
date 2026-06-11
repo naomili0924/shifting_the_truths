@@ -311,6 +311,10 @@ class WebGame:
             return {"error": "not_talk"}
         if name not in self.names:
             return {"error": "bad_name"}
+        if name not in self.base_prompt:
+            return {"ok": True,
+                    "reply": self.L["web"].get("suspects_arriving",
+                                               "The suspects are still gathering — try again in a moment.")}
         item = next((e for e in self.evidence if e["name"] == item_name), None)
         if not item:
             return {"error": "no_item"}

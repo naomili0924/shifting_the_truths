@@ -37,6 +37,10 @@
   .bub.you{ background:#23303a; margin-left:auto; }
   .bub.npc{ background:#241f18; }
   .who{ font-size:12px; color:var(--dim); margin:2px 2px 0; }
+  .bub.typing{ color:var(--dim); }
+  .dots i{ font-style:normal; animation:blink 1s infinite; }
+  .dots i:nth-child(2){ animation-delay:.2s } .dots i:nth-child(3){ animation-delay:.4s }
+  @keyframes blink{ 0%,100%{opacity:.2} 50%{opacity:1} }
   .evchip{ display:inline-block; margin:3px; padding:5px 9px; border:1px solid var(--line);
     border-radius:999px; background:#1a1610; font-size:13px; cursor:pointer; }
   .evchip:hover{ border-color:var(--accent); }
@@ -64,7 +68,7 @@
     <div class="row">
       <input id="chatInput" placeholder="Ask a question…" style="flex:1"
              onkeydown="if(event.key==='Enter')sendChat()"/>
-      <button class="btn primary" onclick="sendChat()">Ask</button>
+      <button id="chatAsk" class="btn primary" onclick="sendChat()">Ask</button>
     </div>
   </div></div>
 
@@ -458,22 +462,53 @@ function openChat(name){
   showOverlay('chat');
   setTimeout(()=>document.getElementById('chatInput').focus(),50);
 }
+function bubbleHTML(who,html,cls){
+  return `<div class="who" style="${who==='you'?'text-align:right':''}">${who==='you'?'You':chatName}</div>`+
+         `<div class="bub ${who==='you'?'you':'npc'}${cls||''}">${html}</div>`;
+}
 function renderChat(c){
   const log=document.getElementById('chatLog');
-  log.innerHTML=(c.chat||[]).map(m=>
-    `<div class="who" style="${m.who==='you'?'text-align:right':''}">${m.who==='you'?'You':c.name}</div>`+
-    `<div class="bub ${m.who==='you'?'you':'npc'}">${escapeHtml(m.text)}</div>`).join('');
+  log.innerHTML=(c.chat||[]).map(m=>bubbleHTML(m.who, escapeHtml(m.text))).join('');
+  log.scrollTop=log.scrollHeight;
+}
+function chatBusy(on){
+  const inp=document.getElementById('chatInput'); inp.disabled=on;
+  const ask=document.getElementById('chatAsk'); if(ask) ask.disabled=on;
+  const ev=document.getElementById('chatEv'); if(ev) ev.style.pointerEvents=on?'none':'';
+}
+// Optimistic feedback: echo the player's line and a typing indicator instantly,
+// so the (unavoidable) model round-trip doesn't feel frozen.
+function showThinking(youText){
+  const log=document.getElementById('chatLog');
+  log.insertAdjacentHTML('beforeend', bubbleHTML('you', escapeHtml(youText)));
+  log.insertAdjacentHTML('beforeend',
+    bubbleHTML('npc', '<span class="dots"><i>.</i><i>.</i><i>.</i></span>', ' typing'));
   log.scrollTop=log.scrollHeight;
 }
 async function sendChat(){
   const inp=document.getElementById('chatInput'); const text=inp.value.trim(); if(!text) return;
-  inp.value=''; const r=await api('/talk',{name:chatName,text}); G.state=r;
-  if(r.action&&r.action.error){ toast('Cannot ask now'); }
-  const c=(r.cast||[]).find(x=>x.name===chatName); renderChat(c); playScene().build();
+  inp.value=''; showThinking(text); chatBusy(true);
+  try{
+    const r=await api('/talk',{name:chatName,text});
+    if(r && r.cast){ G.state=r; }
+    if(r && r.action && r.action.error){ toast('Cannot ask now'); }
+  } catch(e){ toast('That didn’t go through — try again.'); }
+  finally{
+    chatBusy(false);
+    const c=(G.state.cast||[]).find(x=>x.name===chatName); renderChat(c);
+    document.getElementById('chatInput').focus();
+  }
 }
 async function showEv(item){
-  const r=await api('/show',{name:chatName,item}); G.state=r;
-  const c=(r.cast||[]).find(x=>x.name===chatName); renderChat(c); playScene().build();
+  showThinking('▸ '+item); chatBusy(true);
+  try{
+    const r=await api('/show',{name:chatName,item});
+    if(r && r.cast){ G.state=r; }
+  } catch(e){ toast('That didn’t go through — try again.'); }
+  finally{
+    chatBusy(false);
+    const c=(G.state.cast||[]).find(x=>x.name===chatName); renderChat(c);
+  }
 }
 
 function openEvidence(){
