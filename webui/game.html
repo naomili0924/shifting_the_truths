@@ -9,10 +9,10 @@
   :root{ --ink:#e8e2d6; --dim:#9a9082; --panel:#161310ee; --line:#3a342c;
          --accent:#c9a14a; --bad:#b4654a; }
   *{ box-sizing:border-box; }
-  html,body{ margin:0; height:100%; background:#0c0a08; color:var(--ink);
+  html,body{ margin:0; height:100%; overflow:hidden; background:#0c0a08; color:var(--ink);
     font-family:"Iowan Old Style",Georgia,"Songti SC",serif; }
-  #wrap{ position:relative; width:960px; max-width:100%; margin:0 auto; }
-  #game{ width:960px; height:640px; max-width:100%; }
+  #wrap{ position:relative; width:100vw; height:100vh; margin:0; }
+  #game{ width:100vw; height:100vh; }
   /* DOM overlays sit above the Phaser canvas */
   .overlay{ position:absolute; inset:0; display:none; z-index:20;
     background:#0c0a08cc; align-items:center; justify-content:center; }
@@ -116,7 +116,8 @@
 //  generated backdrop is atmosphere behind it, and hotspots are CHIPS, never
 //  pixels — so nothing breaks if the painting put the desk somewhere else.
 // ----------------------------------------------------------------------------
-const W = 960, H = 640, TOP_H = 460;   // top area shows the backdrop + chips
+// Dimensions track the browser window (full-page canvas, Phaser RESIZE mode).
+let W = window.innerWidth, H = window.innerHeight, TOP_H = Math.max(360, H - 190);
 const G = { sid:null, state:null, lang:'en' };
 
 async function api(path, body){
@@ -207,7 +208,7 @@ class IntroScene extends Phaser.Scene {
 // ============================ Play (the world) =============================
 // Scene world is a square the camera roams (the painting is square). Big enough
 // to pan/zoom into; the painting upscales to fill it.
-const SW = 900;
+let SW = Math.round(Math.max(W, H) * 1.25);
 
 class PlayScene extends Phaser.Scene {
   constructor(){ super('Play'); }
@@ -260,6 +261,7 @@ class PlayScene extends Phaser.Scene {
     this.clearObjs();
     const st=G.state, img=st.images||{}, kind=st.phase_kind;
     const cam=this.cameras.main;
+    cam.setSize(W,H); this.uiCam.setSize(W,H);   // track full-page canvas
 
     if(kind==='search'){
       // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
@@ -493,8 +495,25 @@ function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&
 const game = new Phaser.Game({
   type: Phaser.AUTO, parent:'game', width:W, height:H,
   backgroundColor:'#0c0a08',
-  scale:{ mode:Phaser.Scale.FIT, autoCenter:Phaser.Scale.CENTER_HORIZONTALLY },
+  scale:{ mode:Phaser.Scale.RESIZE, parent:'game', width:'100%', height:'100%' },
   scene:[StartScene, IntroScene, PlayScene]
+});
+
+// Keep the global dimensions in sync with the canvas and re-lay-out on resize.
+function applySize(w,h){
+  W=Math.round(w); H=Math.round(h);
+  TOP_H=Math.max(360, H-190);
+  SW=Math.round(Math.max(W,H)*1.25);
+}
+game.scale.on('resize', (sz)=>{
+  applySize(sz.width, sz.height);
+  clearTimeout(window.__rz);
+  window.__rz=setTimeout(()=>{
+    game.scene.getScenes(true).forEach(s=>{
+      if(s.scene.key==='Play' && Array.isArray(s.objs)) s.build();
+      else if(s.scene.isActive()) s.scene.restart();
+    });
+  }, 120);
 });
 </script>
 </body>
