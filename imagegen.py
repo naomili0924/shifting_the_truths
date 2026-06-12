@@ -41,6 +41,34 @@ _DEFAULT_STYLE = (
 )
 
 
+_TF_PATCHED = False
+
+
+def _patch_transformers_compat():
+    """transformers 5.x removed CLIPFeatureExtractor (renamed to CLIPImageProcessor),
+    but the diffusion runtime still does `from transformers import CLIPFeatureExtractor`.
+    Alias it via the lazy module's __getattr__ so that import resolves — done here
+    (game side), not by editing the sibling pipeline. Idempotent, best-effort."""
+    global _TF_PATCHED
+    if _TF_PATCHED:
+        return
+    try:
+        import transformers
+        if not hasattr(transformers, "CLIPFeatureExtractor"):
+            _LM = type(transformers)
+            _orig = _LM.__getattr__
+
+            def _aliased(self, name, _orig=_orig):
+                if name == "CLIPFeatureExtractor":
+                    return self.CLIPImageProcessor
+                return _orig(self, name)
+
+            _LM.__getattr__ = _aliased
+        _TF_PATCHED = True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("transformers compat patch skipped: %s", exc)
+
+
 class ImageGen:
     """Lazy, cached, fail-soft wrapper around the SDXL-Turbo ONNX pipeline."""
 
@@ -87,6 +115,7 @@ class ImageGen:
             try:
                 if self.idmc_path and self.idmc_path not in sys.path:
                     sys.path.insert(0, self.idmc_path)
+                _patch_transformers_compat()
                 from inference_driven_model_compiler.optimum.onnxruntime.modeling_diffusion import (
                     ORTDiffusionPipeline,
                 )

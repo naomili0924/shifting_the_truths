@@ -76,7 +76,7 @@ model — each is loaded lazily, so an English game never loads the Chinese mode
 
 | Language | Model | Location |
 |---|---|---|
-| English | SDXL-Turbo (512, English prompts) | `/workspace/models/sdxl-turbo-onnx` |
+| English | SDXL-Turbo (512, English prompts) | `/dev/shm/sdxl-turbo-onnx` |
 | 中文 | Hunyuan-DiT (1024, Chinese prompts) | `/dev/shm/hunyuan-onnx` |
 
 Both are produced by the sibling `inference_driven_model_compiler` inference-driven

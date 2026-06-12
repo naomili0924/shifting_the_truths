@@ -60,7 +60,11 @@
   <div id="chat" class="overlay"><div class="card">
     <div class="row" style="justify-content:space-between">
       <h2 id="chatName">—</h2>
-      <button class="btn" onclick="closeOverlay('chat')">✕</button>
+      <div class="row" style="gap:6px;align-items:center">
+        <span id="voiceStatus" class="muted" style="font-size:12px"></span>
+        <button id="soundBtn" class="btn" title="Voice" onclick="toggleSound()">🔊</button>
+        <button class="btn" onclick="closeOverlay('chat')">✕</button>
+      </div>
     </div>
     <div class="muted" id="chatRole"></div>
     <div class="chatlog" id="chatLog"></div>
@@ -139,31 +143,63 @@ function toast(msg){
 
 // ---- voice playback ------------------------------------------------------
 // Lines are synthesized on the server in the background; the WAV URL is known
-// before the file exists, so we retry until it appears. A sequential queue
+// before the file exists. We play through ONE persistent <audio> element that
+// is "unlocked" by the first user gesture (browsers block autoplay otherwise),
+// probe readiness with HEAD (the WAV may not exist yet), and a sequential queue
 // keeps the player's question and the suspect's reply from overlapping.
-let _audioUnlocked=false;
+let _voiceEl=null, _voiceUnlocked=false;
+const _SILENT='data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAA=';
+function _getVoiceEl(){ if(!_voiceEl){ _voiceEl=new Audio(); _voiceEl.preload='auto'; } return _voiceEl; }
 function unlockAudio(){
-  if(_audioUnlocked) return; _audioUnlocked=true;
-  try{ const a=new Audio(); a.muted=true; a.play().catch(()=>{}); }catch(e){}
+  if(_voiceUnlocked) return;
+  const a=_getVoiceEl();
+  try{ a.src=_SILENT; const p=a.play(); if(p&&p.then) p.then(()=>{_voiceUnlocked=true;}).catch(()=>{}); else _voiceUnlocked=true; }catch(e){}
 }
-document.addEventListener('pointerdown', unlockAudio, {once:true});
+// keep trying to unlock on every gesture until it sticks
+document.addEventListener('pointerdown', unlockAudio);
+document.addEventListener('keydown', unlockAudio);
+let _soundHinted=false;
+function _soundHint(){ if(_soundHinted) return; _soundHinted=true; toast('🔊 Tap the speaker button to enable voice'); }
+
+// Sound on/off toggle (chat panel). Clicking it is a user gesture, so it also
+// unlocks audio; turning it back on replays the last reply line.
+let _soundOn = (localStorage.getItem('voiceOn') !== '0');
+let _lastVoiceUrl = null;
+function updateSoundBtn(){
+  const b=document.getElementById('soundBtn');
+  if(b){ b.textContent=_soundOn?'🔊':'🔇'; b.title=_soundOn?'Voice on — click to mute':'Voice off — click to enable'; }
+}
+function toggleSound(){
+  _soundOn=!_soundOn; try{ localStorage.setItem('voiceOn', _soundOn?'1':'0'); }catch(e){}
+  updateSoundBtn();
+  if(_soundOn){ unlockAudio(); if(_lastVoiceUrl) playVoice(_lastVoiceUrl); }
+  else { _voiceQ.length=0; _voiceBusy=false; try{ _getVoiceEl().pause(); }catch(e){} }
+}
+
+function _voiceStatus(t){ const e=document.getElementById('voiceStatus'); if(e) e.textContent=t||''; }
 const _voiceQ=[]; let _voiceBusy=false;
-function playVoice(url){ if(!url) return; _voiceQ.push(url); _pumpVoice(); }
+function playVoice(url){
+  if(!url) return;
+  if(!_soundOn){ _voiceStatus('🔇 muted — click 🔊'); return; }
+  _voiceQ.push(url); _voiceStatus('⏳ voice…'); _pumpVoice();
+}
 function _pumpVoice(){
   if(_voiceBusy || !_voiceQ.length) return;
   const url=_voiceQ.shift(); _voiceBusy=true;
-  _playWhenReady(url, ()=>{ _voiceBusy=false; _pumpVoice(); });
+  _playWhenReady(url, ()=>{ _voiceBusy=false; if(!_voiceQ.length) _voiceStatus(''); _pumpVoice(); });
 }
 function _playWhenReady(url, done, tries=0){
-  let settled=false;
-  const a=new Audio(url);
-  a.onended=()=>{ if(!settled){ settled=true; done(); } };
-  // Retry up to ~45s: a line is synthesized in the background, and the very
-  // first one can wait on a cold model load (later lines arrive in a few s).
-  const retry=()=>{ if(settled) return; settled=true;
-    if(tries<90) setTimeout(()=>_playWhenReady(url, done, tries+1), 500); else done(); };
-  a.onerror=retry;
-  a.play().catch(retry);   // 404 (not generated yet) or autoplay block -> retry
+  // Wait for the WAV to exist (background synthesis; the first one may wait on a
+  // cold model load), THEN play it on the unlocked element. A blocked play is a
+  // user-gesture problem, not a not-ready one — prompt instead of looping.
+  fetch(url,{method:'HEAD',cache:'no-store'}).then(r=>{
+    if(!r.ok){ if(tries<90) setTimeout(()=>_playWhenReady(url,done,tries+1),500); else done(); return; }
+    const a=_getVoiceEl(); let fin=false; const end=()=>{ if(!fin){fin=true; done();} };
+    a.onended=end; a.onerror=end; a.src=url;
+    a.onplaying=()=>_voiceStatus('▶ playing');
+    const p=a.play();
+    if(p&&p.then) p.then(()=>_voiceStatus('▶ playing')).catch(()=>{ _voiceUnlocked=false; _voiceStatus('⚠ blocked — click 🔊'); _soundHint(); end(); });
+  }).catch(()=>{ if(tries<60) setTimeout(()=>_playWhenReady(url,done,tries+1),500); else done(); });
 }
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
 function showOverlay(id){ document.getElementById(id).classList.add('show'); }
@@ -487,6 +523,7 @@ let chatName=null;
 function openChat(name){
   chatName=name;
   const c=(G.state.cast||[]).find(x=>x.name===name); if(!c) return;
+  updateSoundBtn();
   document.getElementById('chatName').textContent=name;
   document.getElementById('chatRole').textContent=c.role;
   renderChat(c);
@@ -530,7 +567,7 @@ async function sendChat(){
     const r=await api('/talk',{name:chatName,text});
     if(r && r.cast){ G.state=r; }
     if(r && r.action && r.action.error){ toast('Cannot ask now'); }
-    if(r && r.action) playVoice(r.action.reply_audio);   // suspect's reply voice
+    if(r && r.action && r.action.reply_audio){ _lastVoiceUrl=r.action.reply_audio; playVoice(r.action.reply_audio); }   // suspect's reply voice
   } catch(e){ toast('That didn’t go through — try again.'); }
   finally{
     chatBusy(false);

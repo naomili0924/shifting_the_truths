@@ -3,7 +3,7 @@
 # re-exporting them. The models are large (SDXL ~7 GB, Hunyuan ~22 GB) and live
 # in private Hugging Face repos; download them to the locations config.yaml's
 # `images.by_lang` points at:
-#   en -> SDXL-Turbo  -> /workspace/models/sdxl-turbo-onnx
+#   en -> SDXL-Turbo  -> /dev/shm/sdxl-turbo-onnx (RAM-backed: re-run after a restart)
 #   zh -> Hunyuan-DiT -> /dev/shm/hunyuan-onnx   (RAM-backed: re-run after a restart)
 #
 # Prereq: a Hugging Face token with read access to the repos:
@@ -15,7 +15,7 @@ set -euo pipefail
 SDXL_REPO="${SDXL_REPO:-Jinyan0924/sdxl-turbo-onnx}"
 HUNYUAN_REPO="${HUNYUAN_REPO:-Jinyan0924/hunyuan-dit-onnx}"
 TTS_REPO="${TTS_REPO:-Jinyan0924/chatterbox-turbo-onnx}"
-SDXL_DIR="${SDXL_DIR:-/workspace/models/sdxl-turbo-onnx}"
+SDXL_DIR="${SDXL_DIR:-/dev/shm/sdxl-turbo-onnx}"
 HUNYUAN_DIR="${HUNYUAN_DIR:-/dev/shm/hunyuan-onnx}"
 TTS_DIR="${TTS_DIR:-/workspace/models/chatterbox-turbo-onnx}"
 

@@ -61,7 +61,7 @@ images:
   # Hunyuan-DiT (Chinese prompts, its strength). Each is loaded lazily on first use.
   by_lang:
     en:
-      model_dir: /workspace/models/sdxl-turbo-onnx
+      model_dir: /dev/shm/sdxl-turbo-onnx
       width: 512
       height: 512
       steps: 1          # SDXL-Turbo is a 1-step distilled model

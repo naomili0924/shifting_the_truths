@@ -56,6 +56,25 @@ def _safe_provider(cfg_block):
         return MockProvider(), True
 
 
+_VOICE_MAX = 130
+
+
+def _voice_text(text, max_chars=_VOICE_MAX):
+    """Reduce a line to a short, speakable 'taste' for TTS (the full text is still
+    displayed). chatterbox is autoregressive, so long lines take 15-20s; voicing
+    the first sentence or two keeps it snappy. Strips parenthetical/bracketed
+    stage directions (narration, not speech)."""
+    import re as _re
+    t = _re.sub(r"[\(\[][^)\]]*[\)\]]", " ", text or "")   # drop (stage directions)
+    t = _re.sub(r"\s+", " ", t).strip()
+    if len(t) <= max_chars:
+        return t
+    cut = t[:max_chars]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "),
+              cut.rfind("。"), cut.rfind("！"), cut.rfind("？"))
+    return (cut[:end + 1] if end > 40 else cut).strip()
+
+
 class WebGame:
     """One playable session, driven by API calls instead of stdin."""
 
@@ -335,11 +354,13 @@ class WebGame:
         self.questions_log[name].append(text)
         self.chat[name].append({"who": "you", "text": text})
         # Voice the player's question now, so it plays while the reply generates.
-        ask_audio = self._enqueue_tts(text, self.player_voice)
+        ask_audio = self._enqueue_tts(_voice_text(text), self.player_voice)
         reply = self._npc_reply(name, text)
         self.chat[name].append({"who": "npc", "text": reply})
         voice = ttsgen.voice_for(name, self.voices_assign, self.default_voice)
-        reply_audio = self._enqueue_tts(reply, voice)
+        # Voice only a short spoken "taste" of the reply (the full text is shown):
+        # chatterbox is autoregressive, so a long line takes 15-20s to synthesize.
+        reply_audio = self._enqueue_tts(_voice_text(reply), voice)
         return {"ok": True, "reply": reply,
                 "ask_audio": ask_audio, "reply_audio": reply_audio}
 
@@ -509,6 +530,17 @@ class WebGame:
 # ----------------------------------------------------------------
 app = Flask(__name__, static_folder=None)
 GAMES: dict[str, WebGame] = {}
+
+
+@app.after_request
+def _no_cache_html(resp):
+    """Never let the browser/CDN serve a stale game.html or game JS — otherwise an
+    updated client (e.g. the voice playback fix) won't reach players who refresh."""
+    ct = resp.headers.get("Content-Type", "")
+    if "text/html" in ct or "javascript" in ct:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 def _load_cfg():
