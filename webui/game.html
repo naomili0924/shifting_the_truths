@@ -136,6 +136,35 @@ function toast(msg){
   const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block';
   clearTimeout(toast._t); toast._t=setTimeout(()=>t.style.display='none', 2200);
 }
+
+// ---- voice playback ------------------------------------------------------
+// Lines are synthesized on the server in the background; the WAV URL is known
+// before the file exists, so we retry until it appears. A sequential queue
+// keeps the player's question and the suspect's reply from overlapping.
+let _audioUnlocked=false;
+function unlockAudio(){
+  if(_audioUnlocked) return; _audioUnlocked=true;
+  try{ const a=new Audio(); a.muted=true; a.play().catch(()=>{}); }catch(e){}
+}
+document.addEventListener('pointerdown', unlockAudio, {once:true});
+const _voiceQ=[]; let _voiceBusy=false;
+function playVoice(url){ if(!url) return; _voiceQ.push(url); _pumpVoice(); }
+function _pumpVoice(){
+  if(_voiceBusy || !_voiceQ.length) return;
+  const url=_voiceQ.shift(); _voiceBusy=true;
+  _playWhenReady(url, ()=>{ _voiceBusy=false; _pumpVoice(); });
+}
+function _playWhenReady(url, done, tries=0){
+  let settled=false;
+  const a=new Audio(url);
+  a.onended=()=>{ if(!settled){ settled=true; done(); } };
+  // Retry up to ~45s: a line is synthesized in the background, and the very
+  // first one can wait on a cold model load (later lines arrive in a few s).
+  const retry=()=>{ if(settled) return; settled=true;
+    if(tries<90) setTimeout(()=>_playWhenReady(url, done, tries+1), 500); else done(); };
+  a.onerror=retry;
+  a.play().catch(retry);   // 404 (not generated yet) or autoplay block -> retry
+}
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
 function showOverlay(id){ document.getElementById(id).classList.add('show'); }
 const L = () => (G.state && G.state.web) || {};
@@ -494,10 +523,14 @@ function showThinking(youText){
 async function sendChat(){
   const inp=document.getElementById('chatInput'); const text=inp.value.trim(); if(!text) return;
   inp.value=''; showThinking(text); chatBusy(true);
+  unlockAudio();
+  // Voice the question right away — it plays while the reply is generated.
+  api('/say',{text}).then(s=>{ if(s) playVoice(s.audio); }).catch(()=>{});
   try{
     const r=await api('/talk',{name:chatName,text});
     if(r && r.cast){ G.state=r; }
     if(r && r.action && r.action.error){ toast('Cannot ask now'); }
+    if(r && r.action) playVoice(r.action.reply_audio);   // suspect's reply voice
   } catch(e){ toast('That didn’t go through — try again.'); }
   finally{
     chatBusy(false);

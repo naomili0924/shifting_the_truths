@@ -92,6 +92,44 @@ The Hunyuan dir is under `/dev/shm` (RAM-backed) — re-run `restore_models.sh`
 after an instance restart. If a model is missing, that language just falls back
 to plain backdrops.
 
+## Voice (text-to-speech)
+
+Conversation lines are spoken aloud — both the suspect's reply and the player's
+own question — by a local **chatterbox-turbo ONNX** model (exported by the sibling
+`inference_driven_model_compiler`). Same design rules as the art: **optional,
+lazy, cached, fail-soft** — if the model or a GPU is unavailable, the game is
+simply silent (no errors), exactly like the no-art and mock-LLM fallbacks.
+
+**English only.** chatterbox-turbo speaks English, so a Chinese game gets no audio
+(`audio.by_lang` has no `zh` entry → `ttsgen.instance("zh")` returns `None`).
+
+**Plays while the reply is generated.** When you ask a question, the browser
+voices *your* line immediately (via `/api/say`) while the server is still
+producing the suspect's reply — so audio starts right away instead of after a
+wait. Clips are generated in a background thread, cached on disk by `(text, voice)`,
+and the model is pre-warmed per session so the first line isn't slow.
+
+**Gender-matched voices.** Each suspect gets a fixed voice; the player's questions
+use a narrator voice. Reference clips are public-domain
+[CMU Arctic](http://festvox.org/cmu_arctic/) recordings in `webui/assets/voices/`,
+mapped in `config.yaml`'s `audio.assign`:
+
+| Voice | Used by |
+|---|---|
+| `male_a`, `male_b` | Marco Chen, James Okafor |
+| `female_a`, `female_b` | Elena, Priya, Sofia |
+| `narrator` | the player's questions |
+
+```bash
+huggingface-cli login          # read access to the voice repo
+./restore_models.sh            # also pulls the voice model (SKIP_TTS=1 to skip)
+python web.py                  # voice plays automatically in the Phaser UI
+```
+
+The voice ONNX (~1 GB, English) restores to `/workspace/models/chatterbox-turbo-onnx`
+(config `audio.by_lang.en.model_dir`). `ttsgen.py` is the cached, fail-soft painter
+for audio — the exact mirror of `imagegen.py`.
+
 ## Language / 语言
 
 The player picks the language; English stays the default and is never
@@ -218,5 +256,6 @@ of play with no spoilers. The `logs/` directory is gitignored.
 - `web.py` — Flask backend for the browser UI (one session per browser)
 - `rooms.py` — visual room manifest: judge-authored layout + image prompts (verified, deterministic fallback)
 - `imagegen.py` — optional cached SDXL-Turbo ONNX backdrop/portrait/item painter (graceful no-art fallback)
+- `ttsgen.py` — optional cached chatterbox-turbo ONNX voice for conversation lines (graceful no-voice fallback)
 - `webui/game.html` — the Phaser point-and-click client (painted backdrops, chip hotspots, faces)
 - `webui/index.html` — the original single-page web client (served at `/classic`)

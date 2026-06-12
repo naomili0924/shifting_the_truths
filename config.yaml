@@ -76,3 +76,33 @@ images:
       steps: 20
       guidance: 6.0
       style: 电影感的暗调氛围，烛光，写实，精致细节，无文字
+
+# Optional voice (text-to-speech) for conversation lines. A thin, lazy, cached
+# layer over the chatterbox-turbo ONNX pipeline exported by the sibling
+# inference_driven_model_compiler. English only — a Chinese game gets no audio
+# (graceful, like a missing image model). Restore the model with restore_models.sh.
+audio:
+  enabled: true
+  idmc_path: /workspace                  # holds inference_driven_model_compiler
+  provider: CUDAExecutionProvider        # falls back to no-voice if it can't load
+  device: cuda
+  cache_dir: webui/assets/cache/audio    # served at /assets/cache/audio/<name>
+  voices_dir: webui/assets/voices        # reference clips (CMU Arctic, public domain)
+  player_voice: narrator                 # the player's own questions
+  default_voice: female_a                # any suspect not in `assign`
+  # suspect display name -> voice id (gender-matched; English cast).
+  assign:
+    Marco Chen: male_a
+    James Okafor: male_b
+    Elena Voss-Reyes: female_a
+    Dr. Priya Sharma: female_b
+    Sofia Lindqvist: female_a
+  by_lang:
+    en:
+      model_dir: /workspace/models/chatterbox-turbo-onnx
+      voices:                            # voice id -> reference wav (in voices_dir)
+        male_a: male_a.wav
+        male_b: male_b.wav
+        female_a: female_a.wav
+        female_b: female_b.wav
+        narrator: narrator.wav

@@ -28,6 +28,7 @@ import yaml
 from flask import Flask, request, jsonify, send_from_directory
 
 import imagegen
+import ttsgen
 import rooms
 from providers import provider_from_config, MockProvider
 from i18n import t, normalize_lang
@@ -124,8 +125,48 @@ class WebGame:
         gen = imagegen.instance(self.lang)   # EN -> SDXL, ZH -> Hunyuan
         self.art_enabled = bool(gen and gen.available())
 
+        # Optional voice (chatterbox-turbo ONNX, English only). Suspects get a
+        # gender-matched voice; the player's questions get the narrator voice.
+        audcfg = cfg.get("audio") or {}
+        self.voices_assign = audcfg.get("assign") or {}
+        self.player_voice = audcfg.get("player_voice", "narrator")
+        self.default_voice = audcfg.get("default_voice", self.player_voice)
+        tgen = ttsgen.instance(self.lang)
+        self.audio_enabled = bool(tgen and tgen.available())
+
         # Everything heavy runs off the request path, behind the intro.
         threading.Thread(target=self._setup, daemon=True).start()
+        # Pre-load the voice model + prepare voices so the first line isn't slow.
+        threading.Thread(target=self._warm_audio, daemon=True).start()
+
+    def _warm_audio(self):
+        if not self.audio_enabled:
+            return
+        g = ttsgen.instance(self.lang)
+        if g:
+            try:
+                g.warm(self._voices_in_use())
+            except Exception:  # noqa: BLE001 - warming is best-effort
+                pass
+
+    def _voices_in_use(self):
+        vs = {self.player_voice, self.default_voice}
+        vs.update(self.voices_assign.get(n) for n in self.names)
+        return [v for v in vs if v]
+
+    def _enqueue_tts(self, text, voice):
+        """Servable URL for (text, voice); start background synthesis if not yet
+        cached. Returns the URL immediately (browser polls until it appears), or
+        None if voice is off / unavailable."""
+        if not self.audio_enabled or not (text or "").strip():
+            return None
+        g = ttsgen.instance(self.lang)
+        if g is None:
+            return None
+        name = g.url_name(text, voice)
+        if not g.cached(text, voice):
+            threading.Thread(target=g.generate, args=(text, voice), daemon=True).start()
+        return f"/assets/cache/audio/{name}"
 
     # ---- background setup (judge work) then painting ----------------
     def _setup(self):
@@ -293,9 +334,14 @@ class WebGame:
             return {"error": "empty"}
         self.questions_log[name].append(text)
         self.chat[name].append({"who": "you", "text": text})
+        # Voice the player's question now, so it plays while the reply generates.
+        ask_audio = self._enqueue_tts(text, self.player_voice)
         reply = self._npc_reply(name, text)
         self.chat[name].append({"who": "npc", "text": reply})
-        return {"ok": True, "reply": reply}
+        voice = ttsgen.voice_for(name, self.voices_assign, self.default_voice)
+        reply_audio = self._enqueue_tts(reply, voice)
+        return {"ok": True, "reply": reply,
+                "ask_audio": ask_audio, "reply_audio": reply_audio}
 
     def show(self, name, item_name):
         if not self.ready:
@@ -480,6 +526,16 @@ try:
 except Exception:
     imagegen.configure({"enabled": False})
 
+# Configure the (optional) text-to-speech generator the same way.
+try:
+    _audcfg = dict(_CFG.get("audio") or {})
+    for _k in ("cache_dir", "voices_dir"):
+        if _audcfg.get(_k) and not os.path.isabs(_audcfg[_k]):
+            _audcfg[_k] = os.path.join(HERE, _audcfg[_k])
+    ttsgen.configure(_audcfg)
+except Exception:
+    ttsgen.configure({"enabled": False})
+
 
 def _game():
     sid = request.headers.get("X-Session")
@@ -549,6 +605,19 @@ def api_talk():
     d = request.get_json(silent=True) or {}
     r = g.talk(d.get("name", ""), d.get("text", ""))
     return _respond(g, {"action": r})
+
+
+@app.post("/api/say")
+def api_say():
+    """Voice an arbitrary line (default: the player's question voice) and return
+    its audio URL immediately. Lets the browser play the question while the reply
+    is still being generated. Returns {"audio": null} when voice is unavailable."""
+    sid, g = _game()
+    if not g:
+        return jsonify({"error": "no_session"}), 404
+    d = request.get_json(silent=True) or {}
+    url = g._enqueue_tts(d.get("text", ""), d.get("voice") or g.player_voice)
+    return jsonify({"audio": url})
 
 
 @app.post("/api/show")

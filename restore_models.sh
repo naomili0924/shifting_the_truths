@@ -14,8 +14,10 @@ set -euo pipefail
 
 SDXL_REPO="${SDXL_REPO:-Jinyan0924/sdxl-turbo-onnx}"
 HUNYUAN_REPO="${HUNYUAN_REPO:-Jinyan0924/hunyuan-dit-onnx}"
+TTS_REPO="${TTS_REPO:-Jinyan0924/chatterbox-turbo-onnx}"
 SDXL_DIR="${SDXL_DIR:-/workspace/models/sdxl-turbo-onnx}"
 HUNYUAN_DIR="${HUNYUAN_DIR:-/dev/shm/hunyuan-onnx}"
+TTS_DIR="${TTS_DIR:-/workspace/models/chatterbox-turbo-onnx}"
 
 echo "Restoring SDXL-Turbo -> ${SDXL_DIR}"
 huggingface-cli download "${SDXL_REPO}" --repo-type model --local-dir "${SDXL_DIR}"
@@ -23,4 +25,12 @@ huggingface-cli download "${SDXL_REPO}" --repo-type model --local-dir "${SDXL_DI
 echo "Restoring Hunyuan-DiT -> ${HUNYUAN_DIR}"
 huggingface-cli download "${HUNYUAN_REPO}" --repo-type model --local-dir "${HUNYUAN_DIR}"
 
-echo "Done. EN -> ${SDXL_DIR} ; ZH -> ${HUNYUAN_DIR}"
+# Voice (text-to-speech) for conversation lines — config.yaml's audio.by_lang.en
+# points here. English only (~1 GB). Skip with SKIP_TTS=1 if you don't want voice.
+if [ "${SKIP_TTS:-0}" != "1" ]; then
+  echo "Restoring chatterbox-turbo (voice) -> ${TTS_DIR}"
+  huggingface-cli download "${TTS_REPO}" --repo-type model --local-dir "${TTS_DIR}" \
+    --include "ve/*" "s3gen_estimator/*" "s3gen_hift/*" "t3_backbone/*"
+fi
+
+echo "Done. EN art -> ${SDXL_DIR} ; ZH art -> ${HUNYUAN_DIR} ; voice -> ${TTS_DIR}"
