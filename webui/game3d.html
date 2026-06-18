@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Shifting Truth — 3D</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0b0e;color:#e8e2d4;
+    font-family:Georgia,'Times New Roman',serif;overflow:hidden}
+  #c{width:100vw;height:100vh;display:block;touch-action:none;outline:none}
+  .panel{position:absolute;background:rgba(14,13,18,.86);border:1px solid #4a3f2e;
+    border-radius:10px;padding:12px 14px;backdrop-filter:blur(4px);box-shadow:0 6px 24px #000a}
+  #top{top:12px;left:12px;right:12px;display:flex;gap:16px;align-items:center;
+    pointer-events:none}
+  #top .panel{pointer-events:auto}
+  #actbox{flex:1}
+  #title{font-size:15px;color:#d9b87a;letter-spacing:.5px}
+  #sub{font-size:12px;opacity:.8;margin-top:2px}
+  #timer{font-variant-numeric:tabular-nums;font-size:20px;color:#e8e2d4;min-width:64px;text-align:center}
+  #side{top:84px;right:12px;width:250px;max-height:62vh;overflow:auto}
+  #side h3{margin:.2em 0 .4em;font-size:13px;color:#d9b87a;border-bottom:1px solid #3a3326;padding-bottom:3px}
+  .ev{font-size:12px;margin:6px 0;padding-left:8px;border-left:2px solid #6b5836}
+  .ev b{color:#e8d9b0}
+  #hintbar{font-size:12px;opacity:.85;margin-top:6px}
+  #bottom{bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:10px}
+  button{font-family:inherit;background:#2a2419;color:#e8e2d4;border:1px solid #6b5836;
+    border-radius:8px;padding:9px 16px;font-size:14px;cursor:pointer}
+  button:hover{background:#3a3322}button:disabled{opacity:.4;cursor:default}
+  .modal{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(5,5,8,.72);z-index:20}
+  .card{max-width:560px;width:90%;max-height:86vh;overflow:auto;background:#14121a;
+    border:1px solid #5a4c34;border-radius:14px;padding:26px 30px;box-shadow:0 10px 40px #000}
+  .card h1{color:#d9b87a;font-size:22px;margin:.1em 0 .4em}
+  .card h2{color:#d9b87a;font-size:16px}
+  .card p{line-height:1.55;font-size:14px}
+  input,textarea,select{width:100%;box-sizing:border-box;background:#0e0d12;color:#e8e2d4;
+    border:1px solid #5a4c34;border-radius:7px;padding:9px;font-family:inherit;font-size:14px;margin:5px 0}
+  textarea{min-height:60px;resize:vertical}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .hide{display:none!important}
+  #chat{position:absolute;right:12px;bottom:12px;width:340px;max-height:70vh;display:flex;flex-direction:column}
+  #log{flex:1;overflow:auto;font-size:13px;margin:6px 0;max-height:46vh}
+  #log .you{color:#9fc0e8;margin:6px 0}#log .npc{color:#e8d9b0;margin:6px 0}
+  #toast{position:absolute;bottom:70px;left:50%;transform:translateX(-50%);
+    background:rgba(20,18,12,.95);border:1px solid #6b5836;border-radius:8px;
+    padding:10px 18px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:70vw}
+  #toast.on{opacity:1}
+  .muted{opacity:.7;font-size:12px}
+  #help{position:absolute;left:12px;bottom:12px;width:230px;font-size:11.5px;opacity:.8}
+  a{color:#d9b87a}
+  #cross{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;pointer-events:none;z-index:5;opacity:.85}
+  #cross:before,#cross:after{content:"";position:absolute;background:#e8e2d4;box-shadow:0 0 2px #000}
+  #cross:before{left:8px;top:0;width:2px;height:18px}
+  #cross:after{top:8px;left:0;height:2px;width:18px}
+  #prompt{position:absolute;left:50%;top:55%;transform:translateX(-50%);z-index:5;pointer-events:none;
+    font-size:14px;color:#ffe9a8;text-shadow:0 1px 3px #000;background:rgba(20,18,12,.6);
+    padding:4px 11px;border-radius:6px;opacity:0;transition:opacity .12s;white-space:nowrap}
+  #prompt.on{opacity:1}
+  #locktip{position:absolute;left:50%;bottom:62px;transform:translateX(-50%);z-index:5;pointer-events:none;
+    font-size:12px;color:#cfc6b0;text-shadow:0 1px 2px #000;opacity:.85}
+  /* While walking (pointer locked) the screen is clean — no HUD text at all.
+     The menu/HUD only appears when the cursor is freed with Esc. */
+  body.playing #top, body.playing #side, body.playing #bottom,
+  body.playing #help, body.playing #locktip, body.playing #toast{display:none!important}
+  /* The one allowed text: an item's description, shown on a find. */
+  #itemcard{position:absolute;left:50%;bottom:13%;transform:translateX(-50%);max-width:560px;width:80%;
+    box-sizing:border-box;background:rgba(16,13,8,.93);border:1px solid #6b5836;border-left:4px solid #e8c558;
+    border-radius:10px;padding:14px 22px;z-index:8;opacity:0;transition:opacity .4s;pointer-events:none;
+    box-shadow:0 8px 30px #000b}
+  #itemcard.on{opacity:1}
+  #itemcard h4{margin:0 0 6px;color:#ffe9a8;font-size:17px}
+  #itemcard .d{font-size:14px;line-height:1.5;color:#e8e2d4}
+  #itemcard .it{display:flex;gap:14px;align-items:flex-start}
+  #itemcard .it+.it{margin-top:12px;border-top:1px solid #4a3f2e;padding-top:12px}
+  #itemcard .thumb{width:84px;height:84px;object-fit:cover;border-radius:8px;border:1px solid #6b5836;flex:0 0 auto}
+  #itemcard .tx{flex:1}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- HUD -->
+<div id="top" class="hide">
+  <div class="panel" id="actbox"><div id="title"></div><div id="sub"></div></div>
+  <div class="panel" id="timer">--:--</div>
+</div>
+<div id="side" class="panel hide">
+  <h3 id="evhdr">Evidence</h3>
+  <div id="evlist"><div class="muted">Nothing found yet.</div></div>
+  <div id="hintbar"></div>
+</div>
+<div id="bottom" class="hide">
+  <button id="resetBtn" title="Return to the starting point (or press R)">↺ Reset position</button>
+  <button id="hintBtn" title="Reveal a promising spot">Hint</button>
+  <button id="nextBtn">Next phase ▸</button>
+</div>
+<div id="help" class="panel hide">
+  <b>WASD</b> to walk · <b>drag the mouse</b> to look around.<br>
+  Walk up to a piece of furniture and <b>click it to open</b> it (or press
+  <b>E</b>); <b>click again to close</b> it and put anything back. Click a suspect
+  to question them. <b>R</b> resets your position · <b>Esc</b> closes this menu.
+</div>
+<div id="toast"></div>
+<div id="itemcard"></div>
+<div id="locktip" class="hide"><b>WASD</b> walk · <b>drag</b> to look · <b>click</b> to open / close · <b>R</b> reset · <b>Esc</b> menu</div>
+
+<!-- chat panel -->
+<div id="chat" class="panel hide">
+  <h3 id="chatName">—</h3>
+  <div id="log"></div>
+  <input id="q" placeholder="Ask a question… (Enter)"/>
+  <div class="row">
+    <button id="showBtn">Show evidence</button>
+    <button id="closeChat">Step away</button>
+  </div>
+</div>
+
+<!-- start / loading / accuse / verdict modals -->
+<div id="startModal" class="modal">
+  <div class="card">
+    <h1>Shifting Truth — 3D</h1>
+    <p>A murder mystery you explore in three dimensions. <b>WASD</b> to walk,
+    <b>drag the mouse</b> to look. Walk up to things and <b>click to open</b> them —
+    <b>open doors and closets, lift the cloth, move things aside</b>; clues hide where
+    you'd have to disturb something to find them (and most things hide nothing).
+    Click again to put it back. Then question the suspects and make your one accusation.</p>
+    <p>Language / 语言:
+      <select id="lang"><option value="en">English</option><option value="zh">中文</option></select>
+    </p>
+    <div class="row"><button id="startBtn">Begin the night</button></div>
+    <p class="muted">Runs on the same engine as the 2D UI. First scene may take a few
+    seconds while the art is painted.</p>
+  </div>
+</div>
+<div id="loadModal" class="modal hide"><div class="card"><h2 id="loadMsg">Setting the scene…</h2><p class="muted">Rolling the plot, painting the room, waking the suspects.</p></div></div>
+<div id="accuseModal" class="modal hide"><div class="card">
+  <h1>Name the truth</h1>
+  <p>The police are at the door. One accusation — who, why, and how.</p>
+  <p>WHO is responsible?</p><select id="acWho"></select>
+  <p>WHY did they do it?</p><textarea id="acWhy" placeholder="The real motive…"></textarea>
+  <p>HOW was it done? <span class="muted">(optional)</span></p><textarea id="acHow"></textarea>
+  <div class="row"><button id="acSubmit">Make the accusation</button></div>
+</div></div>
+<div id="verdictModal" class="modal hide"><div class="card">
+  <h1 id="vTitle">Verdict</h1><p id="vBody" style="white-space:pre-wrap"></p>
+  <div class="row"><button onclick="location.reload()">Play again</button></div>
+</div></div>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+<script src="https://cdn.babylonjs.com/proceduralTexturesLibrary/babylonjs.proceduralTextures.min.js"></script>
+<script>
+"use strict";
+// ------------------------------------------------------------------ API layer
+let SID = null;
+async function api(path, body){
+  const r = await fetch(path, {method:"POST", headers:{
+      "Content-Type":"application/json", ...(SID?{"X-Session":SID}:{})},
+      body: JSON.stringify(body||{})});
+  return r.json();
+}
+const $ = id => document.getElementById(id);
+function toast(msg, ms=2200){ const t=$("toast"); t.textContent=msg; t.classList.add("on");
+  clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("on"), ms); }
+function esc(s){ const d=document.createElement("div"); d.textContent=s==null?"":String(s); return d.innerHTML; }
+// The only on-screen text during play: the description of what you just found.
+function showItemCard(items){
+  const c=$("itemcard");
+  c.innerHTML = items.map(it=>{
+    const img = it.image ? `<img class="thumb" src="${esc(it.image)}" alt="">` : "";
+    return `<div class="it">${img}<div class="tx"><h4>${esc(it.name)}</h4><div class="d">${esc(it.found_text||"")}</div></div></div>`;
+  }).join("");
+  c.classList.add("on");
+  const dwell = 4500 + items.reduce((a,it)=>a+(it.found_text||"").length,0)*34;
+  clearTimeout(showItemCard._t); showItemCard._t=setTimeout(()=>c.classList.remove("on"), Math.min(dwell, 15000));
+}
+function hideItemCard(){ const c=$("itemcard"); c.classList.remove("on"); clearTimeout(showItemCard._t); }
+
+// ------------------------------------------------------------------ Babylon scene
+const canvas = $("c");
+const engine = new BABYLON.Engine(canvas, true, {preserveDrawingBuffer:true, stencil:true});
+let scene, camera, gui, highlight;
+const ROOM = {w:13, d:13, h:5};
+let furniture = [];          // {spot, root, reveal(), searched}
+let suspects = [];           // {name, mesh}
+let backLight;
+
+function buildScene(){
+  scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color3(0.03,0.03,0.05);
+  scene.ambientColor = new BABYLON.Color3(0.32,0.28,0.22);   // warm ambient fill (works with material.ambientColor)
+  scene.fogMode = BABYLON.Scene.FOGMODE_EXP2; scene.fogDensity=0.012;
+  scene.fogColor = new BABYLON.Color3(0.03,0.03,0.05);
+
+  // First-person walk: mouse-look turns you; WASD walking is handled manually
+  // (horizontal only — see the movement loop) so you walk along the ground in the
+  // direction you're facing and never drift up/down.
+  scene.collisionsEnabled = true;
+  camera = new BABYLON.UniversalCamera("cam", new BABYLON.Vector3(0, EYE, 4.8), scene);
+  camera.setTarget(new BABYLON.Vector3(0, EYE-0.1, -1));
+  camera.attachControl(canvas, true);
+  camera.minZ = 0.15; camera.angularSensibility = 3500; camera.inertia = 0.3;  // drag-to-look feel (higher = slower)
+  camera.checkCollisions = true; camera.applyGravity = false;                  // flat floor; no vertical drift
+  camera.ellipsoid = new BABYLON.Vector3(0.5, 0.85, 0.5);
+  camera.keysUp=[]; camera.keysDown=[]; camera.keysLeft=[]; camera.keysRight=[]; // built-in (pitch-following) move OFF
+  window._spawnPos = camera.position.clone();   // initial starting point, for the reset button / R key
+  window._spawnRot = camera.rotation.clone();
+
+  // Image-based lighting: soft ambient + real reflections on PBR surfaces (metal/brass/floor).
+  // IBL gives reflections + a touch of ambient — kept LOW so the noir mood survives.
+  try { scene.environmentTexture = BABYLON.CubeTexture.CreateFromPrefilteredData(
+        "https://assets.babylonjs.com/environments/environmentSpecular.env", scene);
+        scene.environmentIntensity = 0.22; } catch(e){}
+
+  const hemi = new BABYLON.HemisphericLight("h", new BABYLON.Vector3(0,1,0), scene);
+  hemi.intensity=0.18; hemi.diffuse=new BABYLON.Color3(0.7,0.66,0.56); hemi.groundColor=new BABYLON.Color3(0.06,0.05,0.04);
+  const lamp = new BABYLON.PointLight("p", new BABYLON.Vector3(0,3.6,1.0), scene);
+  lamp.intensity=0.7; lamp.diffuse=new BABYLON.Color3(1.0,0.78,0.48); lamp.range=22;   // warm candlelight
+  backLight = lamp;
+  // Directional key light casts the real-time shadows that ground the furniture.
+  const sun = new BABYLON.DirectionalLight("sun", new BABYLON.Vector3(-0.45,-1,-0.35), scene);
+  sun.position = new BABYLON.Vector3(4,8,4); sun.intensity=0.45; sun.diffuse=new BABYLON.Color3(0.95,0.85,0.66);
+  const shadow = new BABYLON.ShadowGenerator(1024, sun);
+  shadow.useBlurExponentialShadowMap = true; shadow.blurKernel = 32; shadow.darkness = 0.4;
+  window._shadowGen = shadow;
+
+  highlight = new BABYLON.HighlightLayer("hl", scene);
+  gui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("ui");
+
+  buildRoom();
+  setupCrosshairControls();
+  engine.runRenderLoop(()=>scene.render());
+}
+window.addEventListener("resize", ()=>engine.resize());
+
+// ---- first-person aim/interact (crosshair + pointer lock) --------------------
+let targeted=null;
+const EYE=1.7, WALK=3.0;            // eye height (m) and walk impulse/sec (added to cameraDirection)
+const KEYS={};                      // currently-held movement keys
+function uiBlocking(){ return !$("chat").classList.contains("hide") || !!document.querySelector(".modal:not(.hide)"); }
+function targetGlow(mesh){
+  const md=mesh&&mesh.metadata; if(!md) return [];
+  if(md.kind==="spot"||md.kind==="decoy") return md.obj.searched? [] : md.obj.glowMeshes;
+  return [mesh]; // suspect billboard
+}
+function clearTarget(){
+  if(targeted) targetGlow(targeted).forEach(m=>highlight.removeMesh(m));
+  targeted=null;
+}
+function setTarget(mesh){            // glow only — no on-screen prompt text
+  if(mesh===targeted) return;
+  clearTarget(); if(!mesh) return;
+  targeted=mesh;
+  targetGlow(mesh).forEach(m=>highlight.addMesh(m,BABYLON.Color3.FromHexString("#d9b87a")));
+}
+function resetView(){            // return to the initial starting point + facing
+  if(!camera || !window._spawnPos) return;
+  camera.position.copyFrom(window._spawnPos);
+  camera.rotation.copyFrom(window._spawnRot);
+  camera.cameraDirection.set(0,0,0);   // kill any momentum
+}
+// No pointer lock: WASD walks anytime, DRAG to look, CLICK an object to interact.
+let menuOpen=false;
+function playable(){ return !menuOpen && $("chat").classList.contains("hide") && !document.querySelector(".modal:not(.hide)"); }
+function refreshChrome(){
+  document.body.classList.toggle("playing", !menuOpen);           // clean view while walking
+  ["top","side","bottom","help","locktip"].forEach(id=>$(id).classList.toggle("hide", !menuOpen));
+}
+function pickFurniture(){
+  return scene.pick(scene.pointerX, scene.pointerY, m=>m.isPickable && m.metadata &&
+    (m.metadata.kind==="spot"||m.metadata.kind==="decoy"||m.metadata.kind==="suspect"));
+}
+function inReach(pi){ return pi && pi.hit && pi.pickedMesh &&
+  BABYLON.Vector3.Distance(camera.position, pi.pickedPoint) <= 3.6; }   // must be close
+function actOn(mesh){ const md=mesh&&mesh.metadata; if(!md) return;
+  if(md.kind==="suspect") openChat(md.name); else interact(md.obj); }
+function setupCrosshairControls(){
+  // ---- continuous ground-plane walking (no click required) ----
+  scene.onBeforeRenderObservable.add(()=>{
+    if(!playable()){ if(targeted) clearTarget(); return; }
+    camera.rotation.x = Math.max(-1.45, Math.min(1.45, camera.rotation.x));   // clamp pitch
+    const dt = Math.min(engine.getDeltaTime()/1000, 0.05);
+    const fwd = camera.getDirection(BABYLON.Axis.Z); fwd.y=0;
+    const right = camera.getDirection(BABYLON.Axis.X); right.y=0;
+    if(fwd.lengthSquared()>1e-5) fwd.normalize();
+    if(right.lengthSquared()>1e-5) right.normalize();
+    const mv = BABYLON.Vector3.Zero();
+    if(KEYS["w"]||KEYS["arrowup"])    mv.addInPlace(fwd);
+    if(KEYS["s"]||KEYS["arrowdown"])  mv.subtractInPlace(fwd);
+    if(KEYS["d"]||KEYS["arrowright"]) mv.addInPlace(right);
+    if(KEYS["a"]||KEYS["arrowleft"])  mv.subtractInPlace(right);
+    if(mv.lengthSquared()>0){ mv.normalize().scaleInPlace(WALK*dt); camera.cameraDirection.addInPlace(mv); }
+    camera.position.y = EYE;          // stay level — no vertical drift
+  });
+  // ---- mouse: drag rotates the view (Babylon default); a click (no drag) interacts ----
+  let dx=0, dy=0, dragging=false;
+  scene.onPointerObservable.add(pi=>{
+    const T=BABYLON.PointerEventTypes;
+    if(pi.type===T.POINTERDOWN){ dx=scene.pointerX; dy=scene.pointerY; dragging=false; }
+    else if(pi.type===T.POINTERMOVE){
+      if(pi.event.buttons){ if(Math.abs(scene.pointerX-dx)+Math.abs(scene.pointerY-dy)>6) dragging=true; }
+      else if(playable()){ const p=pickFurniture(); setTarget(inReach(p)?p.pickedMesh:null); }   // hover highlight
+    }
+    else if(pi.type===T.POINTERUP){
+      if(!dragging && playable()){ const p=pickFurniture(); if(inReach(p)) actOn(p.pickedMesh); }
+    }
+  });
+  // ---- keys: WASD/arrows walk; E interacts with what you're aiming at; R reset; Esc menu ----
+  const MK=["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"];
+  window.addEventListener("keydown", e=>{ const k=e.key.toLowerCase();
+    if(MK.includes(k)){ KEYS[k]=true; if(playable()) e.preventDefault(); }
+    else if(k==="e" && playable() && targeted){ actOn(targeted); }
+    else if(k==="r" && playable()){ resetView(); }
+    else if(k==="escape"){ menuOpen=!menuOpen; refreshChrome(); } });
+  window.addEventListener("keyup", e=>{ const k=e.key.toLowerCase(); if(MK.includes(k)) KEYS[k]=false; });
+}
+
+// Optional baked material textures (generated by gen_textures.py via the inpainting model).
+// window._TEX is probed at startup; if absent, everything falls back to flat PBR colors.
+const _texCache={};
+function texCat(color){ if(color===METAL||color===BRASS) return "metal";
+  if(color===STONE) return "stone"; if(color===CLOTH||color==="#7e3333") return "fabric"; return "wood"; }
+function catTex(cat, scaleU, scaleV){
+  if(!window._TEX) return null;
+  const key=cat+"|"+(scaleU||1);
+  if(!_texCache[key]){ const t=new BABYLON.Texture("/assets/textures/"+cat+".png", scene);
+    t.uScale=scaleU||1; t.vScale=scaleV||scaleU||1; _texCache[key]=t; }
+  return _texCache[key];
+}
+// PBR material: metals (METAL/BRASS) get real reflections off the environment map.
+function mat(name, color){ const m=new BABYLON.PBRMaterial(name,scene);
+  const c=BABYLON.Color3.FromHexString(color);
+  const metal=(color===METAL||color===BRASS);
+  m.albedoColor=c; m.metallic=metal?0.85:0.0; m.roughness=metal?0.35:0.82;
+  m.environmentIntensity=metal?0.9:0.45;
+  const tx=catTex(texCat(color));               // real material texture when baked
+  if(tx){ m.albedoTexture=tx; m.albedoColor=BABYLON.Color3.White(); }
+  return m; }
+
+function buildRoom(){
+  const floor = BABYLON.MeshBuilder.CreateGround("floor",{width:ROOM.w,height:ROOM.d},scene);
+  const floorMat=new BABYLON.PBRMaterial("floorMat",scene); floorMat.metallic=0; floorMat.roughness=0.55;
+  const bakedFloor=catTex("floor",5,5);   // baked tileable stone if available
+  if(bakedFloor){ floorMat.albedoTexture=bakedFloor; floorMat.albedoColor=new BABYLON.Color3(0.7,0.66,0.6); }
+  else { try{ const marble=new BABYLON.MarbleProceduralTexture("marble",512,scene);
+       marble.numberOfTilesHeight=6; marble.numberOfTilesWidth=6; marble.uScale=3; marble.vScale=3;
+       floorMat.albedoTexture=marble; floorMat.albedoColor=new BABYLON.Color3(0.26,0.22,0.18); }
+  catch(e){ floorMat.albedoColor=BABYLON.Color3.FromHexString("#2a241c"); } }
+  floor.material=floorMat; floor.checkCollisions=true; floor.receiveShadows=true; window._floor=floor;
+  const ceil = BABYLON.MeshBuilder.CreateGround("ceil",{width:ROOM.w,height:ROOM.d},scene);
+  ceil.position.y=ROOM.h; ceil.rotation.x=Math.PI; ceil.material=mat("ceilM","#15110c");
+  const wallM = mat("wallM","#2c2418"); wallM.backFaceCulling=false; window._wallM=wallM;
+  const mk=(w,h,pos,rot)=>{const p=BABYLON.MeshBuilder.CreatePlane("wall",{width:w,height:h},scene);
+    p.position=pos; p.rotation.y=rot; p.material=wallM; p.checkCollisions=true; return p;};
+  // back wall holds the painted backdrop; side+front share the tintable wall material
+  window._backWall = mk(ROOM.w,ROOM.h,new BABYLON.Vector3(0,ROOM.h/2,-ROOM.d/2),0);
+  mk(ROOM.w,ROOM.h,new BABYLON.Vector3(0,ROOM.h/2,ROOM.d/2),Math.PI);
+  mk(ROOM.d,ROOM.h,new BABYLON.Vector3(-ROOM.w/2,ROOM.h/2,0),Math.PI/2);
+  mk(ROOM.d,ROOM.h,new BABYLON.Vector3(ROOM.w/2,ROOM.h/2,0),-Math.PI/2);
+}
+
+// Per-act mood: floor/wall tint, fog, lamp colour — so each act feels distinct.
+const ACT_MOOD={
+  1:{floor:"#2b2a24", wall:"#23262e", lamp:[0.85,0.88,1.0],  fog:[0.03,0.035,0.05]},  // terrace, cool night
+  2:{floor:"#33241a", wall:"#352a1d", lamp:[1.0,0.82,0.5],   fog:[0.04,0.03,0.02]},   // study, warm interior
+  3:{floor:"#222428", wall:"#1d2024", lamp:[0.8,0.85,0.85],  fog:[0.025,0.03,0.035]}  // cellar, cold damp
+};
+function applyActMood(actNum){
+  const m=ACT_MOOD[actNum]||ACT_MOOD[1];
+  if(window._floor) window._floor.material.albedoColor=BABYLON.Color3.FromHexString(m.floor);
+  if(window._wallM) window._wallM.albedoColor=BABYLON.Color3.FromHexString(m.wall);
+  if(backLight) backLight.diffuse=new BABYLON.Color3(...m.lamp);
+  scene.fogColor=new BABYLON.Color3(...m.fog);
+}
+
+function applyBackdrop(url){
+  if(!url || !window._backWall) return;
+  const m=new BABYLON.StandardMaterial("bd",scene);
+  const t=new BABYLON.Texture(url,scene); m.diffuseTexture=t; m.emissiveColor=new BABYLON.Color3(.5,.5,.5);
+  m.specularColor=new BABYLON.Color3(0,0,0); window._backWall.material=m;
+}
+
+// ------------------------------------------------------------------ furniture archetypes
+// Each returns {root, openParts:[{mesh, anim}], hideSpot:Vector3}
+function archetypeFor(id){
+  id=(id||"").toLowerCase();
+  if(/door/.test(id)) return "door";
+  if(/closet|cabinet|cupboard|wardrobe|archive|locker/.test(id)) return "cabinet";
+  if(/desk|drawer/.test(id)) return "desk";
+  if(/chair|seat|stool/.test(id)) return "chair";
+  if(/table|cloth/.test(id)) return "table";
+  if(/fire|hearth|stove/.test(id)) return "fireplace";
+  if(/bed|mattress/.test(id)) return "bed";
+  if(/stair/.test(id)) return "stairs";
+  if(/rail/.test(id)) return "railing";
+  if(/body|corpse/.test(id)) return "body";
+  if(/shelf|rack|bench|tool/.test(id)) return "shelf";
+  return "crate";
+}
+const WOOD="#6b4f2e", DARK="#3a2c1a", CLOTH="#6e2b2b", STONE="#42424a", METAL="#5c606a", BRASS="#9c7b3a";
+function box(name,opts,color,parent){const b=BABYLON.MeshBuilder.CreateBox(name,opts,scene);
+  b.material=mat(name+"M",color); if(parent)b.parent=parent; return b;}
+
+// build one interactive furniture piece; returns object with reveal animation
+function buildFurniture(spot, pos, decoy=false){
+  const type=archetypeFor(spot.id);
+  const root=new BABYLON.TransformNode("root_"+spot.id, scene); root.position=pos;
+  let hide=pos.add(new BABYLON.Vector3(0,0.3,0));
+  const anim=[];   // reversible open/close targets: {n:node, p:"prop.path", a:closed, b:open}
+  const legs=(w,d,h,c)=>[[w,d],[-w,d],[w,-d],[-w,-d]].forEach((p,i)=>
+    box("lg"+i,{width:0.1,height:h,depth:0.1},c||DARK,root).position.set(p[0],h/2,p[1]));
+  if(type==="door"||type==="cabinet"){
+    box("b",{width:1.2,height:2.2,depth:0.55},WOOD,root).position.y=1.1;          // carcass
+    box("trim",{width:1.3,height:0.12,depth:0.62},DARK,root).position.y=2.18;       // cornice
+    box("base",{width:1.3,height:0.16,depth:0.62},DARK,root).position.y=0.08;
+    const piv=new BABYLON.TransformNode("piv",scene); piv.parent=root; piv.position.set(-0.58,1.1,0.29);
+    const panel=box("d",{width:1.08,height:2.0,depth:0.07},"#46341f",piv); panel.position.set(0.54,0,0);
+    box("inset",{width:0.8,height:1.6,depth:0.02},DARK,piv).position.set(0.54,0,0.05);
+    box("knob",{width:0.1,height:0.1,depth:0.14},BRASS,piv).position.set(1.0,0,0.08);
+    hide=pos.add(new BABYLON.Vector3(0,1.0,0.0));
+    anim.push({n:piv, p:"rotation.y", a:0, b:-2.0});
+  } else if(type==="desk"){
+    box("top",{width:1.9,height:0.14,depth:0.95},WOOD,root).position.y=1.0;
+    box("apron",{width:1.7,height:0.5,depth:0.8},"#46341f",root).position.y=0.72;
+    legs(0.82,0.38,0.95);
+    const drawer=box("dr",{width:1.0,height:0.32,depth:0.72},"#46341f",root); drawer.position.set(0,0.78,0.46);
+    box("knob",{width:0.12,height:0.12,depth:0.1},BRASS,root).position.set(0,0.78,0.84);
+    hide=pos.add(new BABYLON.Vector3(0,0.78,1.15));
+    anim.push({n:drawer, p:"position.z", a:0.46, b:1.28});
+  } else if(type==="table"){
+    box("top",{width:2.0,height:0.13,depth:1.2},WOOD,root).position.y=1.0;
+    box("apron",{width:1.8,height:0.16,depth:1.0},"#46341f",root).position.y=0.88;
+    legs(0.88,0.48,0.9);
+    const cloth=box("cloth",{width:2.18,height:0.96,depth:1.36},CLOTH,root); cloth.position.y=0.62;
+    const clothtop=box("clothtop",{width:2.22,height:0.06,depth:1.4},"#7e3333",root); clothtop.position.y=1.08;
+    hide=pos.add(new BABYLON.Vector3(0,0.3,0));
+    anim.push({n:cloth, p:"position.y", a:0.62, b:2.42}); anim.push({n:clothtop, p:"position.y", a:1.08, b:2.88});
+  } else if(type==="chair"){
+    box("seat",{width:0.66,height:0.1,depth:0.66},WOOD,root).position.y=0.62;
+    box("back",{width:0.66,height:0.7,depth:0.08},WOOD,root).position.set(0,1.0,-0.3);
+    box("slat",{width:0.5,height:0.5,depth:0.04},"#46341f",root).position.set(0,1.0,-0.27);
+    [[0.27,0.27],[-0.27,0.27],[0.27,-0.27],[-0.27,-0.27]].forEach((p,i)=>
+      box("clg"+i,{width:0.08,height:0.62,depth:0.08},DARK,root).position.set(p[0],0.31,p[1]));
+    hide=pos.add(new BABYLON.Vector3(0,0.1,0));
+    anim.push({n:root, p:"position.x", a:pos.x, b:pos.x+1.2}); anim.push({n:root, p:"rotation.y", a:0, b:-0.5});
+  } else if(type==="fireplace"){
+    box("mantel",{width:2.2,height:0.24,depth:0.95},WOOD,root).position.y=2.0;
+    box("colL",{width:0.4,height:2.0,depth:0.85},STONE,root).position.set(-0.9,1.0,0);
+    box("colR",{width:0.4,height:2.0,depth:0.85},STONE,root).position.set(0.9,1.0,0);
+    box("back",{width:1.4,height:2.0,depth:0.2},"#1a1a1f",root).position.set(0,1.0,-0.3);
+    const grate=box("gr",{width:1.3,height:1.1,depth:0.1},METAL,root); grate.position.set(0,0.75,0.42);
+    hide=pos.add(new BABYLON.Vector3(0,0.55,0.5));
+    anim.push({n:grate, p:"position.y", a:0.75, b:2.1});
+  } else if(type==="bed"){
+    box("head",{width:2.5,height:1.3,depth:0.2},WOOD,root).position.set(0,0.85,-0.8);
+    box("frame",{width:2.5,height:0.35,depth:1.7},WOOD,root).position.y=0.42;
+    legs(1.1,0.7,0.42);
+    const matt=box("mat",{width:2.3,height:0.32,depth:1.55},"#8a7a58",root); matt.position.y=0.72;
+    const pillow=box("pillow",{width:0.9,height:0.18,depth:0.5},"#cfc6b0",root); pillow.position.set(0,0.9,-0.5);
+    const blanket=box("blanket",{width:2.32,height:0.1,depth:0.9},CLOTH,root); blanket.position.set(0,0.9,0.35);
+    hide=pos.add(new BABYLON.Vector3(0,0.2,0.2));
+    anim.push({n:matt,p:"position.y",a:0.72,b:2.12}); anim.push({n:pillow,p:"position.y",a:0.9,b:2.3}); anim.push({n:blanket,p:"position.y",a:0.9,b:2.3});
+  } else if(type==="shelf"){
+    box("frame",{width:1.9,height:2.3,depth:0.5},WOOD,root).position.y=1.15;
+    box("backp",{width:1.8,height:2.2,depth:0.06},"#2c2014",root).position.set(0,1.15,-0.2);
+    const bookC=["#6e2b2b","#3a5a3a","#3a4a6e","#7a5a2a","#5a3a5a"];
+    for(let i=0;i<3;i++){ box("sh"+i,{width:1.8,height:0.07,depth:0.45},"#46341f",root).position.set(0,0.55+i*0.62,0);
+      for(let j=0;j<5;j++) box("bk"+i+j,{width:0.12,height:0.4,depth:0.32},bookC[(i+j)%5],root).position.set(-0.7+j*0.22,0.8+i*0.62,0); }
+    const bx=box("crate",{width:0.55,height:0.45,depth:0.4},METAL,root); bx.position.set(0.55,1.42,0.05);
+    hide=pos.add(new BABYLON.Vector3(0.55,1.42,0.5));
+    anim.push({n:bx, p:"position.z", a:0.05, b:0.75});
+  } else if(type==="railing"){
+    box("post1",{width:0.16,height:1.2,depth:0.16},METAL,root).position.set(-1.1,0.6,0);
+    box("post2",{width:0.16,height:1.2,depth:0.16},METAL,root).position.set(1.1,0.6,0);
+    for(let i=-3;i<=3;i++) box("bal"+i,{width:0.05,height:1.0,depth:0.05},METAL,root).position.set(i*0.3,0.5,0);
+    const bar=box("bar",{width:2.4,height:0.12,depth:0.16},METAL,root); bar.position.y=1.15;
+    hide=pos.add(new BABYLON.Vector3(0,1.15,0));
+    anim.push({n:bar, p:"rotation.z", a:0, b:0.5});
+  } else if(type==="stairs"){
+    for(let i=0;i<5;i++){ box("st"+i,{width:2.2,height:0.22,depth:0.55},STONE,root).position.set(0,0.11+i*0.22,-i*0.55);
+      box("ri"+i,{width:2.2,height:0.22,depth:0.05},"#33333a",root).position.set(0,0.11+i*0.22,-i*0.55-0.27); }
+    box("railS",{width:0.1,height:0.1,depth:3.0},METAL,root).position.set(1.0,0.9,-1.1);
+    hide=pos.add(new BABYLON.Vector3(0,0.3,0.5));   // no moving part; searching just inspects
+  } else if(type==="body"){
+    box("form",{width:0.9,height:0.4,depth:2.0},"#0e0e0e",root).position.y=0.2;
+    const sheet=box("sheet",{width:1.05,height:0.55,depth:2.15},"#cfc6b0",root); sheet.position.y=0.42;
+    hide=pos.add(new BABYLON.Vector3(0,0.2,0));
+    anim.push({n:sheet, p:"position.y", a:0.42, b:1.9});
+  } else { // crate
+    box("cr",{width:1.05,height:1.0,depth:1.05},WOOD,root).position.y=0.5;
+    box("bandH",{width:1.1,height:0.08,depth:1.1},METAL,root).position.y=0.5;
+    box("bandV",{width:0.08,height:1.05,depth:1.1},METAL,root).position.set(0,0.5,0);
+    const piv=new BABYLON.TransformNode("lidpiv",scene); piv.parent=root; piv.position.set(0,1.0,-0.52);
+    const lid=box("lid",{width:1.08,height:0.1,depth:1.08},"#46341f",piv); lid.position.set(0,0,0.52);
+    hide=pos.add(new BABYLON.Vector3(0,0.55,0));
+    anim.push({n:piv, p:"rotation.x", a:0, b:-1.7});
+  }
+
+  // solid, aim-able bounding box over the whole piece (blocks walking through it)
+  const pick=BABYLON.MeshBuilder.CreateBox("pick_"+spot.id,{width:2.4,height:2.4,depth:2.4},scene);
+  pick.parent=root; pick.position.y=1.1; pick.visibility=0.001; pick.isPickable=true;
+  pick.checkCollisions=true;
+  const meshes=root.getChildMeshes().filter(m=>m!==pick);     // visible parts (exclude the invisible collider)
+  if(window._shadowGen) meshes.forEach(m=>window._shadowGen.addShadowCaster(m));   // cast real shadows
+  const obj={spot, root, anim, hide, searched:!!spot.searched, pick, glowMeshes:meshes,
+             kind:type, decoy, itemMeshes:[], found:[], isOpen:false};
+  pick.metadata={kind:(decoy?"decoy":"spot"), obj};   // pointer picking reads this
+  return obj;
+}
+
+// reveal an item mesh at the hide spot
+function spawnItem(obj, item){
+  const s=BABYLON.MeshBuilder.CreateBox("item",{width:0.45,height:0.3,depth:0.32},scene);
+  s.position=obj.hide.clone();
+  const m=new BABYLON.StandardMaterial("im",scene); m.emissiveColor=BABYLON.Color3.FromHexString("#e8c558");
+  m.diffuseColor=BABYLON.Color3.FromHexString("#a07d20"); s.material=m;
+  if(item.image){ const t=new BABYLON.Texture(item.image,scene); m.diffuseTexture=t; m.emissiveColor=new BABYLON.Color3(.4,.4,.3);}
+  highlight.addMesh(s, BABYLON.Color3.FromHexString("#ffe07a"));
+  (obj.itemMeshes=obj.itemMeshes||[]).push(s);   // tracked so we can hide it when the furniture is closed
+  // float + spin — a glowing object in the world; no floating text label
+  scene.onBeforeRenderObservable.add(()=>{ if(!s.isEnabled()) return; s.rotation.y+=0.01;
+    s.position.y=obj.hide.y+0.5+Math.sin(performance.now()/500)*0.05; });
+}
+
+// ------------------------------------------------------------------ interaction
+let STATE=null, busy=false;
+// animate every moving part to its open (b) or closed (a) value
+function setOpen(obj, open){
+  (obj.anim||[]).forEach(t=> BABYLON.Animation.CreateAndStartAnimation(
+    "o", t.n, t.p, 30, 14, (open? t.a : t.b), (open? t.b : t.a), 0));
+  obj.isOpen = open;
+}
+// Click to interact: open it (revealing any clue), click again to CLOSE it and put the item back.
+async function interact(obj){
+  if(STATE && STATE.phase_kind!=="search") return;
+  if(obj.isOpen){                                  // ---- close: put everything back
+    setOpen(obj, false); hideItemCard();
+    obj.itemMeshes.forEach(m=>m.setEnabled(false));
+    return;
+  }
+  setOpen(obj, true);                              // ---- open
+  if(obj.decoy) return;                            // decoys hide nothing
+  if(obj.searched){                                // already found earlier — just re-reveal
+    if(obj.itemMeshes.length){ obj.itemMeshes.forEach(m=>m.setEnabled(true)); showItemCard(obj.found); }
+    return;
+  }
+  if(busy) return; busy=true; hideItemCard();
+  try{
+    const res=await api("/api/search",{spot_id:obj.spot.id});
+    if(res.action && res.action.error) return;
+    STATE=res; obj.searched=true;
+    const spot=(res.spots||[]).find(s=>s.id===obj.spot.id);
+    obj.found=(spot&&spot.found)||[];
+    // The only on-screen text during play: a description when something is actually found.
+    if(obj.found.length){ obj.found.forEach(it=>spawnItem(obj,it)); showItemCard(obj.found); }
+    renderHUD();
+  } finally { busy=false; }
+}
+
+// ------------------------------------------------------------------ scene <- state
+function layoutPos(spot, i, n, chips){
+  const c=chips&&chips[spot.id];
+  let x,z;
+  if(c){ x=(c.x-0.5)*(ROOM.w-3); z=(0.5-c.y)*(ROOM.d-3); }
+  else { const cols=Math.min(n,3); x=((i%cols)+0.5)/cols*(ROOM.w-3)-(ROOM.w-3)/2; z=(Math.floor(i/cols)+0.5)/Math.ceil(n/cols)*(ROOM.d-3)-(ROOM.d-3)/2; }
+  return new BABYLON.Vector3(x,0,z);
+}
+function buildAct(state){
+  furniture.forEach(f=> f.root.dispose());
+  furniture=[]; suspects.forEach(s=>s.mesh.dispose()); suspects=[];
+  applyActMood(state.act_num);
+  applyBackdrop(state.images && state.images.backdrop);
+  const spots=state.spots||[]; const chips=(state.images||{}).chips||{};
+  spots.forEach((sp,i)=> furniture.push(buildFurniture(sp, layoutPos(sp,i,spots.length,chips))));
+  // re-reveal already-found items (e.g. on phase refresh)
+  furniture.forEach(f=>{ const sp=spots.find(s=>s.id===f.spot.id);
+    if(sp&&sp.searched){ f.searched=true; (sp.found||[]).forEach(it=>spawnItem(f,it)); } });
+  // Decoy furniture: identical-looking, openable, but hide nothing — the real clues
+  // become needles in a haystack, so finding them takes real searching.
+  const realPos=furniture.map(f=>f.root.position.clone());
+  const cand=[[-4.5,-4],[4.5,-4],[-5,0.5],[5,0.5],[-4,4],[4,4],[0,-4.8],[-2,4.5],[2,4.5]];
+  const dtypes=["chair","crate","cabinet","shelf","crate","chair","cabinet"];
+  let placed=0;
+  for(const [x,z] of cand){
+    if(placed>=6) break;
+    const far = realPos.every(p=>Math.hypot(p.x-x,p.z-z)>2.7)
+      && furniture.filter(f=>f.decoy).every(f=>Math.hypot(f.root.position.x-x,f.root.position.z-z)>2.5);
+    if(!far) continue;
+    const t=dtypes[placed%dtypes.length];
+    furniture.push(buildFurniture({id:"decoy_"+t+"_"+placed, name:""}, new BABYLON.Vector3(x,0,z), true));
+    placed++;
+  }
+}
+function buildSuspects(state){
+  const cast=state.cast||[]; const faces=(state.images||{}).faces||{};
+  cast.forEach((c,i)=>{
+    const plane=BABYLON.MeshBuilder.CreatePlane("sus_"+i,{width:1.4,height:1.9},scene);
+    const ang=-Math.PI/2 + (i-(cast.length-1)/2)*0.5;
+    plane.position=new BABYLON.Vector3(Math.cos(ang)*4.2, 1.4, Math.sin(ang)*4.2 - 1);
+    plane.billboardMode=BABYLON.Mesh.BILLBOARDMODE_Y;
+    const m=new BABYLON.StandardMaterial("sm"+i,scene); m.emissiveColor=new BABYLON.Color3(.6,.6,.6);
+    m.diffuseColor=BABYLON.Color3.FromHexString("#3a3326");
+    if(faces[c.name]){ const t=new BABYLON.Texture(faces[c.name],scene); t.hasAlpha=true; m.diffuseTexture=t; m.emissiveTexture=t; }
+    plane.material=m;
+    plane.metadata={kind:"suspect", name:c.name};   // crosshair targeting reads this; no name label
+    suspects.push({name:c.name, mesh:plane});
+  });
+}
+
+// ------------------------------------------------------------------ HUD / phases
+let timerLeft=0, timerInt=null;
+function renderHUD(){
+  if(!STATE) return;
+  const kind=STATE.phase_kind;
+  $("title").textContent = STATE.act_num? `Act ${STATE.act_num} — ${STATE.act_title||""}` : (STATE.scenario&&STATE.scenario.title)||"";
+  const phaseName = kind==="search"?"Search the scene":kind==="talk"?"Question the suspects":kind==="accuse"?"Accuse":"—";
+  $("sub").textContent = `${phaseName}  ·  phase ${STATE.phase_index}/${STATE.phase_total}`;
+  // evidence
+  const ev=STATE.evidence||[]; const box=$("evlist");
+  box.innerHTML = ev.length? ev.map(e=>`<div class="ev"><b>${e.name}</b><br><span class="muted">${e.found_text||""}</span></div>`).join("") : '<div class="muted">Nothing found yet.</div>';
+  $("evhdr").textContent = `Evidence (${ev.length})`;
+  // furniture vs suspects visibility
+  const inTalk = kind==="talk";
+  furniture.forEach(f=> f.root.setEnabled(!inTalk));
+  suspects.forEach(s=> s.mesh.setEnabled(inTalk));
+  $("hintBtn").classList.toggle("hide", kind!=="search");
+  if(kind==="accuse"||kind==="over") openAccuse();
+}
+function startTimer(sec){
+  clearInterval(timerInt); timerLeft=sec||0;
+  const tick=()=>{ const m=Math.floor(timerLeft/60), s=timerLeft%60;
+    $("timer").textContent = (sec? `${m}:${String(s).padStart(2,"0")}` : "—");
+    if(sec && timerLeft<=0){ clearInterval(timerInt); toast("Time's up — moving on."); nextPhase(); }
+    timerLeft--; };
+  tick(); if(sec) timerInt=setInterval(tick,1000);
+}
+async function applyState(state, rebuild){
+  const prevKind = STATE&&STATE.phase_kind, prevAct = STATE&&STATE.act_num;
+  STATE=state;
+  if(rebuild || prevAct!==state.act_num){ buildAct(state); buildSuspects(state); }
+  renderHUD();
+  startTimer(state.phase_seconds);
+}
+async function nextPhase(){
+  const r=await api("/api/next",{});
+  if(r.gossip && r.gossip.length){
+    showCard("Between the acts", r.gossip.map(g=>`${g.name} heard:\n  • `+g.lines.join("\n  • ")).join("\n\n"));
+  }
+  await applyState(r, true);
+}
+
+// ------------------------------------------------------------------ chat
+let chatWith=null;
+function openChat(name){
+  if(STATE.phase_kind!=="talk"){ toast("You can question the suspects in the talk phase."); return; }
+  chatWith=name; $("chat").classList.remove("hide"); $("chatName").textContent=name;
+  const c=(STATE.cast||[]).find(x=>x.name===name); const log=$("log"); log.innerHTML="";
+  (c&&c.chat||[]).forEach(m=>addLine(m.who, m.text));
+  $("q").focus();
+}
+function addLine(who,text){ const d=document.createElement("div"); d.className=who==="you"?"you":"npc";
+  d.textContent=(who==="you"?"You: ":chatWith+": ")+text; $("log").appendChild(d); $("log").scrollTop=$("log").scrollHeight; }
+async function sendQ(){
+  const q=$("q").value.trim(); if(!q||!chatWith) return; $("q").value="";
+  addLine("you",q); const r=await api("/api/talk",{name:chatWith,text:q});
+  if(r.action){ if(r.action.reply) addLine("npc",r.action.reply);
+    playAudio(r.action.ask_audio); setTimeout(()=>playAudio(r.action.reply_audio),300); }
+  STATE=r; renderHUD();
+}
+function playAudio(url){ if(url){ try{ new Audio(url).play().catch(()=>{}); }catch(e){} } }
+
+// ------------------------------------------------------------------ accuse / verdict
+function openAccuse(){
+  document.exitPointerLock();
+  const sel=$("acWho"); if(!sel.options.length){ (STATE.cast||[]).forEach(c=>{
+    const o=document.createElement("option"); o.value=c.name; o.textContent=`${c.name} — ${c.role}`; sel.appendChild(o); });
+    const acc=document.createElement("option"); acc.value="accident"; acc.textContent="No one — it was an accident"; sel.appendChild(acc);
+  }
+  $("accuseModal").classList.remove("hide");
+}
+async function submitAccuse(){
+  const who=$("acWho").value, why=$("acWhy").value, how=$("acHow").value;
+  $("accuseModal").classList.add("hide"); $("loadMsg").textContent="The room goes quiet…"; $("loadModal").classList.remove("hide");
+  const r=await api("/api/accuse",{who,why,how});
+  $("loadModal").classList.add("hide");
+  const v=r.verdict||"(no verdict)";
+  $("vTitle").textContent=v.split("\n")[0]; $("vBody").textContent=v.split("\n").slice(1).join("\n").trim();
+  $("verdictModal").classList.remove("hide");
+}
+
+// ------------------------------------------------------------------ helpers / start
+function showCard(title, body){ document.exitPointerLock();
+  const m=$("verdictModal"); $("vTitle").textContent=title; $("vBody").textContent=body;
+  m.querySelector("button").textContent="Continue"; m.querySelector("button").onclick=()=>{ m.classList.add("hide");
+    m.querySelector("button").textContent="Play again"; m.querySelector("button").onclick=()=>location.reload(); };
+  m.classList.remove("hide");
+}
+async function begin(){
+  const lang=$("lang").value;
+  $("startModal").classList.add("hide"); $("loadModal").classList.remove("hide");
+  try{ const r=await fetch("/assets/textures/floor.png",{method:"HEAD"}); window._TEX=r.ok; }
+  catch(e){ window._TEX=false; }       // baked material textures present? else fall back to procedural/flat
+  buildScene();
+  const s=await api("/api/new",{lang}); SID=s.sid;
+  // poll until setup_done (suspects ready) and backdrop painted
+  let st=s, tries=0;
+  while(tries++<40 && (!st.setup_done)){ await new Promise(r=>setTimeout(r,1500)); st=await api("/api/state",{}); }
+  $("loadModal").classList.add("hide");
+  refreshChrome();        // clean play view (menu hidden); Esc reveals the menu
+  await applyState(st, true);
+  if(!st.images || !st.images.backdrop){ // keep polling art in background
+    pollArt();
+  }
+}
+async function pollArt(){ for(let i=0;i<40;i++){ await new Promise(r=>setTimeout(r,2500));
+  const st=await api("/api/state",{}); if(st.images&&st.images.backdrop){ applyBackdrop(st.images.backdrop);
+    // refresh faces too
+    STATE.images=st.images; if(STATE.phase_kind==="talk"){ buildSuspects(st);} break; } } }
+
+$("startBtn").onclick=begin;
+$("nextBtn").onclick=nextPhase;
+$("resetBtn").onclick=resetView;
+$("hintBtn").onclick=async()=>{ const r=await api("/api/hint",{});
+  if(r.spots&&r.spots.length){ const names=r.spots.map(id=>{const f=furniture.find(x=>x.spot.id===id);return f?f.spot.name:id;});
+    toast("Try: "+names.join(", ")); r.spots.forEach(id=>{const f=furniture.find(x=>x.spot.id===id);
+      if(f) f.glowMeshes.forEach(m=>highlight.addMesh(m,BABYLON.Color3.FromHexString("#ff6b6b")));}); }
+  else toast("No more help — you've found what's worth finding here."); };
+$("closeChat").onclick=()=>{ $("chat").classList.add("hide"); chatWith=null; };
+$("showBtn").onclick=async()=>{ if(!chatWith)return; const ev=(STATE.evidence||[]);
+  if(!ev.length){ toast("You have no evidence to show yet."); return; }
+  const name=prompt("Show which item?\n"+ev.map(e=>e.name).join("\n"), ev[0].name); if(!name)return;
+  const r=await api("/api/show",{name:chatWith,item:name}); if(r.action&&r.action.reply) addLine("npc",r.action.reply); STATE=r; };
+$("q").addEventListener("keydown",e=>{ if(e.key==="Enter") sendQ(); });
+$("acSubmit").onclick=submitAccuse;
+</script>
+</body>
+</html>
