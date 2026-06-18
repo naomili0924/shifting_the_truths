@@ -245,6 +245,27 @@ def instance(lang: str = "en") -> TTSGen | None:
     return _INSTANCES[lang]
 
 
+def dispose() -> None:
+    """Release loaded voice pipeline(s) to reclaim GPU memory; rebuilds lazily on
+    the next generate(). Called by the web server when no session is active."""
+    global _INSTANCES
+    for inst in list(_INSTANCES.values()):
+        try:
+            inst._pipe = None
+            inst._load_failed = False
+        except Exception:  # noqa: BLE001
+            pass
+    _INSTANCES = {}
+    try:
+        import gc; gc.collect()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import torch; torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def voice_for(name: str, assign: dict | None, default: str) -> str:
     """Map a speaker display name to a voice id (config 'assign'), else default."""
     if assign and name in assign:
