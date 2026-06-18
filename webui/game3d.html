@@ -149,6 +149,7 @@
 <script src="https://cdn.babylonjs.com/babylon.js"></script>
 <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
 <script src="https://cdn.babylonjs.com/proceduralTexturesLibrary/babylonjs.proceduralTextures.min.js"></script>
+<script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
 <script>
 "use strict";
 // ------------------------------------------------------------------ API layer
@@ -210,16 +211,16 @@ function buildScene(){
   // IBL gives reflections + a touch of ambient — kept LOW so the noir mood survives.
   try { scene.environmentTexture = BABYLON.CubeTexture.CreateFromPrefilteredData(
         "https://assets.babylonjs.com/environments/environmentSpecular.env", scene);
-        scene.environmentIntensity = 0.22; } catch(e){}
+        scene.environmentIntensity = 0.5; } catch(e){}
 
   const hemi = new BABYLON.HemisphericLight("h", new BABYLON.Vector3(0,1,0), scene);
-  hemi.intensity=0.18; hemi.diffuse=new BABYLON.Color3(0.7,0.66,0.56); hemi.groundColor=new BABYLON.Color3(0.06,0.05,0.04);
+  hemi.intensity=0.45; hemi.diffuse=new BABYLON.Color3(0.85,0.8,0.7); hemi.groundColor=new BABYLON.Color3(0.12,0.1,0.08);
   const lamp = new BABYLON.PointLight("p", new BABYLON.Vector3(0,3.6,1.0), scene);
-  lamp.intensity=0.7; lamp.diffuse=new BABYLON.Color3(1.0,0.78,0.48); lamp.range=22;   // warm candlelight
+  lamp.intensity=1.1; lamp.diffuse=new BABYLON.Color3(1.0,0.82,0.55); lamp.range=26;   // warm candlelight
   backLight = lamp;
   // Directional key light casts the real-time shadows that ground the furniture.
   const sun = new BABYLON.DirectionalLight("sun", new BABYLON.Vector3(-0.45,-1,-0.35), scene);
-  sun.position = new BABYLON.Vector3(4,8,4); sun.intensity=0.45; sun.diffuse=new BABYLON.Color3(0.95,0.85,0.66);
+  sun.position = new BABYLON.Vector3(4,8,4); sun.intensity=0.8; sun.diffuse=new BABYLON.Color3(1.0,0.9,0.72);
   const shadow = new BABYLON.ShadowGenerator(1024, sun);
   shadow.useBlurExponentialShadowMap = true; shadow.blurKernel = 32; shadow.darkness = 0.4;
   window._shadowGen = shadow;
@@ -227,11 +228,34 @@ function buildScene(){
   highlight = new BABYLON.HighlightLayer("hl", scene);
   gui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("ui");
 
+  setupPostFX();
   buildRoom();
   setupCrosshairControls();
   engine.runRenderLoop(()=>scene.render());
 }
 window.addEventListener("resize", ()=>engine.resize());
+
+// Cinematic post-processing: ambient occlusion (solidity), bloom (candlelight glow),
+// ACES tone-mapping + contrast + vignette + grain (noir look), FXAA (smooth edges).
+function setupPostFX(){
+  try{
+    const dr = new BABYLON.DefaultRenderingPipeline("dr", true, scene, [camera]);
+    dr.fxaaEnabled = true;
+    dr.bloomEnabled = true; dr.bloomThreshold = 0.65; dr.bloomWeight = 0.55; dr.bloomScale = 0.6; dr.bloomKernel = 64;
+    dr.imageProcessingEnabled = true;
+    const ip = dr.imageProcessing;
+    ip.toneMappingEnabled = true; ip.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
+    ip.exposure = 1.7; ip.contrast = 1.15;
+    ip.vignetteEnabled = true; ip.vignetteWeight = 1.3; ip.vignetteStretch = 0.4;
+    ip.vignetteColor = new BABYLON.Color4(0, 0, 0, 0);
+    dr.grainEnabled = true; dr.grain.intensity = 7; dr.grain.animated = true;
+  }catch(e){ console.warn("post-fx (pipeline) skipped:", e); }
+  try{
+    const ssao = new BABYLON.SSAO2RenderingPipeline("ssao", scene, {ssaoRatio: 0.75, blurRatio: 1});
+    ssao.radius = 1.4; ssao.totalStrength = 1.3; ssao.base = 0.1; ssao.expensiveBlur = true; ssao.samples = 16;
+    scene.postProcessRenderPipelineManager.attachCamerasToRenderPipeline("ssao", camera);
+  }catch(e){ console.warn("post-fx (ssao) skipped:", e); }
+}
 
 // ---- first-person aim/interact (crosshair + pointer lock) --------------------
 let targeted=null;
@@ -402,11 +426,48 @@ function box(name,opts,color,parent){const b=BABYLON.MeshBuilder.CreateBox(name,
   b.material=mat(name+"M",color); if(parent)b.parent=parent; return b;}
 
 // build one interactive furniture piece; returns object with reveal animation
+// ---- KayKit CC0 furniture models -------------------------------------------
+const MODELS = {};        // name -> AssetContainer (preloaded)
+const MODEL_MAP = {       // spot archetype -> real model (others fall back to primitives)
+  cabinet:"cabinet_medium", desk:"cabinet_medium", table:"table_medium",
+  chair:"chair_A", bed:"bed_double_A", shelf:"shelf_A_big",
+};
+const DECOR = ["armchair","chair_A","chair_stool","lamp_standing","lamp_table",
+               "cactus_small_A","couch","shelf_B_large","book_set","pictureframe_standing_A"];
+const KAYKIT_SCALE = { lamp_standing:1.1, lamp_table:1.3, cactus_small_A:1.5, book_set:1.8,
+                       pictureframe_standing_A:1.4, bed_double_A:1.0, couch:1.2 };
+function _pickDecor(seed){ let h=0; for(const c of (seed||"x")) h=(h*31+c.charCodeAt(0))>>>0; return DECOR[h % DECOR.length]; }
+async function preloadModels(){
+  for(const name of new Set([...Object.values(MODEL_MAP), ...DECOR])){
+    try{ MODELS[name] = await BABYLON.SceneLoader.LoadAssetContainerAsync("/assets/models/kaykit/", name+".gltf", scene); }
+    catch(e){ console.warn("model load failed:", name, e); }
+  }
+}
+function placeKayKit(name, root){
+  const c = MODELS[name]; if(!c) return null;
+  const ent = c.instantiateModelsToScene(); const node = ent.rootNodes[0];
+  node.parent = root; node.scaling.setAll(KAYKIT_SCALE[name] || 1.4);
+  node.computeWorldMatrix(true);
+  const bb = node.getHierarchyBoundingVectors(true);
+  node.position.y += (root.position.y - bb.min.y);   // sit the base on the floor
+  const meshes = node.getChildMeshes();
+  meshes.forEach(m=>{ m.isPickable = false; });       // crosshair uses the pick box, not the model
+  if(window._shadowGen) meshes.forEach(m=>{ try{ window._shadowGen.addShadowCaster(m); }catch(e){} });
+  return { node, meshes };
+}
+
 function buildFurniture(spot, pos, decoy=false){
   const type=archetypeFor(spot.id);
   const root=new BABYLON.TransformNode("root_"+spot.id, scene); root.position=pos;
   let hide=pos.add(new BABYLON.Vector3(0,0.3,0));
   const anim=[];   // reversible open/close targets: {n:node, p:"prop.path", a:closed, b:open}
+  // Prefer a real KayKit model; fall back to procedural primitives when none maps.
+  const modelName = decoy ? _pickDecor(spot.id) : MODEL_MAP[type];
+  const placed = (modelName && MODELS[modelName]) ? placeKayKit(modelName, root) : null;
+  if(placed){
+    hide = pos.add(new BABYLON.Vector3(0, 0.4, 0.7));
+    anim.push({n:placed.node, p:"position.y", a:placed.node.position.y, b:placed.node.position.y + 0.45});
+  } else {
   const legs=(w,d,h,c)=>[[w,d],[-w,d],[w,-d],[-w,-d]].forEach((p,i)=>
     box("lg"+i,{width:0.1,height:h,depth:0.1},c||DARK,root).position.set(p[0],h/2,p[1]));
   if(type==="door"||type==="cabinet"){
@@ -495,6 +556,7 @@ function buildFurniture(spot, pos, decoy=false){
     hide=pos.add(new BABYLON.Vector3(0,0.55,0));
     anim.push({n:piv, p:"rotation.x", a:0, b:-1.7});
   }
+  }  // end primitive fallback
 
   // solid, aim-able bounding box over the whole piece (blocks walking through it)
   const pick=BABYLON.MeshBuilder.CreateBox("pick_"+spot.id,{width:2.4,height:2.4,depth:2.4},scene);
@@ -701,6 +763,7 @@ async function begin(){
   try{ const r=await fetch("/assets/textures/floor.png",{method:"HEAD"}); window._TEX=r.ok; }
   catch(e){ window._TEX=false; }       // baked material textures present? else fall back to procedural/flat
   buildScene();
+  await preloadModels();               // load KayKit furniture models before building the act
   const s=await api("/api/new",{lang}); SID=s.sid;
   // poll until setup_done (suspects ready) and backdrop painted
   let st=s, tries=0;
