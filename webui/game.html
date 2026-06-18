@@ -282,7 +282,7 @@ let SW = Math.round(Math.max(W, H) * 1.6);
 class PlayScene extends Phaser.Scene {
   constructor(){ super('Play'); }
   create(){
-    this.objs=[]; this.explore=false; this.minZoom=H/SW;
+    this.objs=[]; this.explore=false; this.minZoom=H/SW; this.sceneIdx=0;
     const cam=this.cameras.main;
     cam.setBackgroundColor('#0c0a08');
     // drag-to-pan (only while exploring; ignored over fixed UI clicks)
@@ -305,13 +305,19 @@ class PlayScene extends Phaser.Scene {
     this.loadAndBuild();
   }
   zoomBy(f){ const c=this.cameras.main; c.setZoom(Phaser.Math.Clamp(c.zoom*f, this.minZoom||0.5, 3.4)); }
+  gotoScene(i){
+    const cnt=((G.state.images||{}).scenes||[]).length || 1;
+    this.sceneIdx=((i % cnt)+cnt) % cnt;
+    this.loadAndBuild();
+  }
 
   texKey(url){ return 'tex_'+url.replace(/\W/g,'_'); }
   needTextures(){
     const img=G.state.images||{}; const need=[];
     if(img.backdrop) need.push(img.backdrop);
+    (img.scenes||[]).forEach(s=>{ if(s.backdrop) need.push(s.backdrop); });
     Object.values(img.faces||{}).forEach(u=>{ if(u) need.push(u); });
-    return need.filter(u=>!this.textures.exists(this.texKey(u)));
+    return [...new Set(need)].filter(u=>!this.textures.exists(this.texKey(u)));
   }
   loadAndBuild(){
     const need=this.needTextures();
@@ -331,56 +337,70 @@ class PlayScene extends Phaser.Scene {
 
   build(){
     this.clearObjs();
+    if(this._scenePoll){ try{this._scenePoll.remove();}catch(e){} this._scenePoll=null; }
     const st=G.state, img=st.images||{}, kind=st.phase_kind;
     const cam=this.cameras.main;
     cam.setSize(W,H); this.uiCam.setSize(W,H);   // track full-page canvas
     // Reset the per-phase hint state when the phase changes.
     const phaseKey=`${st.act_num}-${st.phase_index}`;
     const newPhase=(this._phaseKey!==phaseKey);
-    if(newPhase){ this._phaseKey=phaseKey; this.hinted=false; this.hintSpots=[]; }
+    if(newPhase){ this._phaseKey=phaseKey; this.hinted=false; this.hintObjs=[]; this.sceneIdx=0; }
 
     if(kind==='search'){
-      // ---- explorable scene: pan + zoom, hidden (invisible) hotspots ----
+      // ---- explorable sub-scene: pan + zoom; clue items + decoys are painted INTO
+      //      the scene, clicked to pick up / inspect. Hotspots are still chips placed
+      //      from the manifest box, so a weak paint never breaks clicking. ----
       this.explore=true;
       cam.setBounds(0,0,SW,SW);
-      // Start zoomed in past the fit point so the picture overflows the window
-      // in both axes — there is always room to drag it around. Zoom out (−) to
-      // see more; the floor keeps the whole scene reachable.
       this.minZoom = Math.max(W,H)/SW;
       cam.setZoom(this.minZoom * 1.4);
       cam.centerOn(SW/2, SW/2);
       this.input.setDefaultCursor('grab');
-      if(img.backdrop && this.textures.exists(this.texKey(img.backdrop))){
-        this.world(this.add.image(0,0,this.texKey(img.backdrop)).setOrigin(0).setDisplaySize(SW,SW));
+
+      const scenes=img.scenes||[];
+      const idx=Math.min(this.sceneIdx, Math.max(0,scenes.length-1));
+      this.sceneIdx=idx;
+      const sc=scenes[idx]||null;
+      const bd=sc&&sc.backdrop;
+      if(bd && this.textures.exists(this.texKey(bd))){
+        this.world(this.add.image(0,0,this.texKey(bd)).setOrigin(0).setDisplaySize(SW,SW));
       } else {
         this.world(this.add.rectangle(0,0,SW,SW,0x171310).setOrigin(0));
       }
-      // invisible clickable regions placed from the manifest — no markers, no
-      // labels, no hints. Found by exploring and clicking.
-      const chips=img.chips||{};
-      (st.spots||[]).forEach(sp=>{
-        const p=chips[sp.id]||{x:0.5,y:0.6};
-        const zx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW;
-        const zy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
-        // No useHandCursor — the cursor must not betray where the hidden spots are.
-        const z=this.world(this.add.zone(zx,zy,150,150).setInteractive());
-        z.on('pointerup',()=>{
+      const clamp=v=>Phaser.Math.Clamp(v,0.04,0.96);
+      (sc?sc.objects||[]:[]).forEach(o=>{
+        const ox=clamp(o.x)*SW, oy=clamp(o.y)*SW;
+        const ow=Math.max(96,(o.w||0.2)*SW), oh=Math.max(96,(o.h||0.2)*SW);
+        const rect=this.world(this.add.rectangle(ox,oy,ow,oh,0xc9a14a,0)
+          .setStrokeStyle(2,0xc9a14a,0).setInteractive({useHandCursor:true}));
+        if(o.collected){
+          rect.setStrokeStyle(2,0x5a8a5a,0.45);
+          this.world(this.add.text(ox,oy,'✓',{fontSize:'32px',color:'#5a8a5a'}).setOrigin(.5));
+        }
+        rect.on('pointerover',()=>{ if(!o.collected) rect.setStrokeStyle(2,0xc9a14a,0.85); });
+        rect.on('pointerout', ()=>{ if(!o.collected) rect.setStrokeStyle(2,0xc9a14a,0); });
+        rect.on('pointerup',()=>{
           if(this._dragged) return;
-          if(!sp.searched) doSearch(sp.id);
-          else if((sp.found||[]).length) showSpotResult(sp);
+          if(o.kind==='collectible'){ o.collected ? doInspect(o.id) : doPickup(o.id); }
+          else doInspect(o.id);
         });
       });
-      // Last-resort hint: gentle glows on the spots /api/hint returned (only the
-      // ones still unsearched). Appears only when the timer triggers requestHint.
-      const searchedIds=new Set((st.spots||[]).filter(s=>s.searched).map(s=>s.id));
-      (this.hintSpots||[]).forEach(id=>{
-        if(searchedIds.has(id)) return;
-        const p=(img.chips||{})[id]||{x:0.5,y:0.6};
-        const gx=Phaser.Math.Clamp(p.x,0.05,0.95)*SW, gy=Phaser.Math.Clamp(p.y,0.05,0.95)*SW;
+      // Last-resort hint: gentle glow on uncollected clue objects /api/hint returned.
+      const byId={}; (sc?sc.objects||[]:[]).forEach(o=>byId[o.id]=o);
+      (this.hintObjs||[]).forEach(id=>{
+        const o=byId[id]; if(!o || o.collected) return;
+        const gx=clamp(o.x)*SW, gy=clamp(o.y)*SW;
         const glow=this.world(this.add.circle(gx,gy,60,0xc9a14a,0.16).setStrokeStyle(3,0xc9a14a,0.6));
         this.tweens.add({targets:glow, scale:1.6, alpha:0.05, duration:1100,
           yoyo:true, repeat:-1, ease:'Sine.inOut'});
       });
+      // Later acts paint in the background — poll until this scene's backdrop lands.
+      if(img.art_enabled && sc && !sc.backdrop){
+        this._scenePoll=this.time.delayedCall(2500, async()=>{
+          const s=await api('/state'); if(s && !s.error){ G.state=s; }
+          if(this.scene.isActive()) this.loadAndBuild();
+        });
+      }
     } else {
       // ---- talk / accuse / over: fixed framing ----
       this.explore=false;
@@ -426,6 +446,16 @@ class PlayScene extends Phaser.Scene {
         backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(1,0)
         .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) this.zoomBy(f); }));
       mkZoom('+',0,1.25); mkZoom('−',52,0.8);
+    }
+    // scene navigation (search only, when the act has more than one sub-scene)
+    if(kind==='search' && (img.scenes||[]).length>1){
+      const cnt=img.scenes.length, idx=Math.min(this.sceneIdx,cnt-1), navY=H-78;
+      const arrow=(label,x,onClick)=> fix(this.add.text(x, navY, label, {fontSize:'22px',
+        color:'#e8e2d6', backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(0,0)
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) onClick(); }));
+      arrow('◂',20,()=>this.gotoScene(idx-1));
+      fix(this.add.text(72, navY+5, `Scene ${idx+1}/${cnt}`, {fontSize:'14px',color:'#bcb3a3'}).setOrigin(0,0));
+      arrow('▸',182,()=>this.gotoScene(idx+1));
     }
 
     if(kind==='accuse'){ openAccuse(); }
@@ -485,14 +515,22 @@ class PlayScene extends Phaser.Scene {
     }
   }
 
-  foundCount(){ return (G.state.spots||[]).reduce((n,s)=>n+((s.found||[]).length),0); }
+  foundCount(){
+    const img=G.state.images||{}; let n=0;
+    (img.scenes||[]).forEach(s=>(s.objects||[]).forEach(o=>{ if(o.kind==='collectible'&&o.collected) n++; }));
+    return n;
+  }
 
   async requestHint(){
     const r=await api('/hint',{});
-    if(r && Array.isArray(r.spots) && r.spots.length){
-      this.hintSpots=r.spots;
+    if(r && Array.isArray(r.objects) && r.objects.length){
+      this.hintObjs=r.objects.map(o=>o.obj_id);
+      // jump to the scene that holds the first hinted object, so the glow is visible
+      const scenes=(G.state.images||{}).scenes||[];
+      const si=scenes.findIndex(s=>(s.objects||[]).some(o=>o.id===r.objects[0].obj_id));
+      if(si>=0) this.sceneIdx=si;
       this.build();
-      toast('Time is short — a couple of details seem worth a closer look.');
+      toast('Time is short — a couple of things seem worth a closer look.');
     }
   }
 }
@@ -516,6 +554,35 @@ function showSpotResult(sp){
   if(!(sp.found||[]).length){ toast('Nothing here.'); return; }
   document.getElementById('gossipTitle').textContent='You found something';
   document.getElementById('gossipBody').innerHTML=sp.found.map(itemCard).join('<hr style="border-color:#2a241c">');
+  showOverlay('gossip');
+}
+
+// Pick up an embedded clue object -> evidence pouch. Decoys/peeks -> inspect only.
+async function doPickup(objId){
+  const r=await api('/pickup',{obj_id:objId});
+  if(r && r.images){ G.state=r; }
+  const a=(r&&r.action)||{};
+  if(a.error){ toast('Can’t pick that up now.'); }
+  else if(a.already){ toast('Already in your pouch.'); }
+  else { showPickupResult(a); }
+  playScene().build();
+}
+function showPickupResult(a){
+  document.getElementById('gossipTitle').textContent=(L().picked_up)||'You picked something up';
+  document.getElementById('gossipBody').innerHTML=itemCard({name:a.name,found_text:a.found_text,image:a.image});
+  showOverlay('gossip');
+}
+async function doInspect(objId){
+  const r=await api('/inspect',{obj_id:objId});
+  if(r && r.images){ G.state=r; }
+  const a=(r&&r.action)||{};
+  if(a.error){ toast('Nothing to see.'); return; }
+  document.getElementById('gossipTitle').textContent=a.name||'A closer look';
+  let body='<span class="muted">'+escapeHtml(a.text||'')+'</span>';
+  if(a.kind==='collectible' && !a.collected){
+    body+='<br><br><span style="color:#c9a14a">There’s something here — you can pick it up.</span>';
+  }
+  document.getElementById('gossipBody').innerHTML=body;
   showOverlay('gossip');
 }
 

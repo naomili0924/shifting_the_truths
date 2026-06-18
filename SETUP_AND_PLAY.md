@@ -10,11 +10,12 @@ Open it and play (pick language on the start screen → click a suspect to
 interrogate, click locations to search, then make your one accusation).
 
 - It runs on **Claude** (NPCs = Haiku, judge = Sonnet), using the key in
-  `/workspace/.env`. `web.py` reads the repo's own `config.yaml` (which is set to
-  the Anthropic provider) — that file is **unchanged**.
-- **Generated art AND voice are ON** — Act backdrops + suspect faces are painted
-  by SDXL-Turbo on the GPU, and conversation lines are spoken by chatterbox-turbo
-  (see "Generated art & voice" below).
+  `/workspace/.env`. `web.py` reads the repo's own `config.yaml`, whose agents use
+  the Anthropic provider.
+- **Generated art AND voice are ON** — each act is built as two **inpainted
+  interactive scenes** (clue items embedded in the scene to pick up, decoy props to
+  inspect) painted by **SDXL on the GPU**, and conversation lines are spoken by
+  chatterbox-turbo (see "Generated art & voice" below).
 - The tunnel URL is **public (no password)** and **ephemeral** — it dies if the
   instance, `web.py`, or `cloudflared` restarts. For a private connection instead,
   use SSH forwarding from your own machine:
@@ -35,28 +36,34 @@ then re-run the tunnel `cloudflared tunnel --url http://127.0.0.1:17080`.
 Powered by your `Jinyan0924` HF models + the `naomili0924/inference_driven_model_compiler`
 project (cloned to `/workspace/inference_driven_model_compiler`).
 
-**Models** (private HF repos — need `hf auth login`; RAM-backed dirs vanish on restart):
-| Repo | → path | Used for |
+**Models** (RAM-backed dirs under `/dev/shm` vanish on restart):
+| Model | → path | Used for |
 |---|---|---|
-| `Jinyan0924/sdxl-turbo-onnx` | `/dev/shm/sdxl-turbo-onnx` | EN backdrops/faces |
-| `Jinyan0924/hunyuan-dit-onnx` | `/dev/shm/hunyuan-onnx` | ZH backdrops |
-| `Jinyan0924/chatterbox-turbo-onnx` | `/workspace/models/chatterbox-turbo-onnx` | voice (EN) |
+| `stabilityai/stable-diffusion-xl-base-1.0` (public) | `/dev/shm/sdxl-base` | scenes (EN+ZH): txt2img base + `from_pipe` inpaint |
+| `Jinyan0924/chatterbox-turbo-onnx` (private, needs `hf auth login`) | `/workspace/models/chatterbox-turbo-onnx` | voice (EN) |
+
+Fetch the scene model with `python export_inpaint.py` (one model serves both
+languages — image prompts are built in English internally).
 
 **Runtime deps installed into `/venv/main`:**
-- Image: `torch==2.11.0+cu128` (GPU), `diffusers`, `transformers`, `optimum`,
-  **`optimum-onnx`**, `onnx`, **`sentencepiece`** (ZH/Hunyuan T5 tokenizer), plus
-  `onnxruntime-gpu` (already present). CUDA-12 libs are registered via `ldconfig`
-  (the image is CUDA 13.2; the wheels are CUDA 12). EN = SDXL-Turbo (512, 1 step,
-  ~1s); ZH = Hunyuan-DiT (1024, 20 steps, ~7–19s/image — noticeably slower).
+- Image: `torch==2.11.0+cu128` (GPU), `diffusers`, `transformers`, `accelerate`.
+  Scenes run **natively via diffusers on the GPU** (torch, fp16) — NOT ONNX
+  (onnxruntime-gpu mis-shapes the inpaint UNet, `out_sample 9≠4`; CPU ONNX is too
+  slow). One SDXL checkpoint: txt2img paints the base scene (~3s), and an inpaint
+  pipeline built from the same weights (`from_pipe`, no extra VRAM) embeds each
+  clue/decoy object (~1s). ~7 GB VRAM total. **Load both torch models (SDXL +
+  chatterbox) sequentially, never concurrently** — a simultaneous CUDA load hits a
+  meta-tensor error (`web.py` serializes them).
 - Voice: `chatterbox-tts` + its helpers (`librosa`, `resemble-perth`, `einops`,
   `conformer`, `omegaconf`, `s3tokenizer`, `torchaudio`, `antlr4-python3-runtime`,
   `pyloudnorm`) — installed mostly with `--no-deps` **on purpose**: a plain
   `pip install chatterbox-tts` would downgrade `diffusers`/`torch` and break the
   image pipeline. The actual TTS inference runs through the idmc ONNX pipeline.
 
-**First paint is slow (~10s)** as the SDXL pipeline loads onto the GPU; cached
-after. Backdrops/faces are painted in a background thread while you read the act
-intro. Cache: `webui/assets/cache/*.png` and `.../audio/*.wav`.
+**First paint is slow (~60s)** as the SDXL pipeline loads onto the GPU; fast after
+(base ~3s, each embedded object ~1s). Act 1's two scenes + faces are painted in a
+background thread while you read the intro; later acts prefetch in the background.
+Cache: `webui/assets/cache/*.png` (scenes + object crops) and `.../audio/*.wav`.
 
 **Restart the web server** (e.g. after an instance reboot, once models are
 re-downloaded): `kill $(cat /tmp/webpy.pid)` then `cd /workspace/shifting_the_truths
