@@ -224,6 +224,28 @@ def instance(lang: str = "en") -> ImageGen | None:
     return _INSTANCES[key]
 
 
+def dispose() -> None:
+    """Release loaded ONNX pipeline(s) to reclaim GPU memory. Safe to call anytime —
+    instances rebuild lazily on the next generate(). Used by the web server to free
+    VRAM when no game session is active."""
+    global _INSTANCES
+    for inst in list(_INSTANCES.values()):
+        try:
+            inst._pipe = None
+            inst._load_failed = False
+        except Exception:  # noqa: BLE001
+            pass
+    _INSTANCES = {}
+    try:
+        import gc; gc.collect()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import torch; torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 if __name__ == "__main__":
     # Smoke test: paint one backdrop to the cache and print its path.
     import argparse

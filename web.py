@@ -22,6 +22,7 @@ import datetime
 import json
 import os
 import threading
+import time
 import uuid
 
 import yaml
@@ -79,6 +80,7 @@ class WebGame:
     """One playable session, driven by API calls instead of stdin."""
 
     def __init__(self, cfg: dict, lang: str):
+        self.last_seen = time.time()        # for idle-session eviction
         self.lang = normalize_lang(lang)
         self.L = t(self.lang)
         self.costs = cfg.get("costs", {})
@@ -573,7 +575,28 @@ def _game():
     sid = request.headers.get("X-Session")
     if not sid:
         sid = (request.get_json(silent=True) or {}).get("sid")
-    return sid, GAMES.get(sid)
+    g = GAMES.get(sid)
+    if g:
+        g.last_seen = time.time()        # touch so active sessions aren't evicted
+    return sid, g
+
+
+SESSION_TTL = 1800        # evict sessions idle > 30 min
+SESSION_MAX = 16          # hard cap on concurrent sessions
+
+def _evict_idle():
+    """Drop idle/excess sessions; when none remain, free the GPU pipelines
+    (image + voice) so VRAM is reclaimed. They lazily reload on next use."""
+    now = time.time()
+    for s in [s for s, g in list(GAMES.items()) if now - getattr(g, "last_seen", now) > SESSION_TTL]:
+        GAMES.pop(s, None)
+    if len(GAMES) > SESSION_MAX:                       # evict oldest beyond the cap
+        for s, _ in sorted(GAMES.items(), key=lambda kv: getattr(kv[1], "last_seen", 0))[:len(GAMES) - SESSION_MAX]:
+            GAMES.pop(s, None)
+    if not GAMES:
+        for _mod in (imagegen, ttsgen):
+            try: _mod.dispose()
+            except Exception: pass
 
 
 @app.get("/")
@@ -595,6 +618,7 @@ def static_files(path):
 
 @app.post("/api/new")
 def api_new():
+    _evict_idle()                       # reclaim memory/GPU from stale sessions
     data = request.get_json(silent=True) or {}
     lang = normalize_lang(data.get("lang", "en"))
     sid = uuid.uuid4().hex
