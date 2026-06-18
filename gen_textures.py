@@ -1,3 +1,6 @@
+# NOTE: superseded by bake_optimum.py. The idmc inference-driven export produced a
+# pipeline with non-standard IO that did not denoise (noise output). bake_optimum.py
+# uses the standard `optimum` inpaint export, which works. Kept for the custom-model path.
 """
 gen_textures.py — bake tileable PBR material textures for the 3D UI using an
 INPAINTING diffusion model (exported to ONNX via inference_driven_model_compiler).
@@ -54,7 +57,27 @@ def load_pipe(model_dir, provider, idmc_path):
     except Exception:
         pass
     from inference_driven_model_compiler.optimum.onnxruntime.modeling_diffusion import ORTDiffusionPipeline
-    print(f"loading inpaint pipeline from {model_dir} ...")
+    # The ORT VAE encoder returns a ModelOutput(latent_sample=...) which diffusers'
+    # retrieve_latents (expects .latent_dist/.latents) can't read — shim it.
+    try:
+        import torch as _t
+        import diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint as _M
+        try:
+            from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution as _DGD
+        except Exception:
+            from diffusers.models.vae import DiagonalGaussianDistribution as _DGD
+        def _rl(enc, generator=None, sample_mode="sample"):
+            if hasattr(enc, "latent_dist"):
+                return enc.latent_dist.sample(generator) if sample_mode == "sample" else enc.latent_dist.mode()
+            # ORT VAE encoder returns ModelOutput(output=8-ch moments) — wrap + sample
+            m = enc.to_tuple()[0] if hasattr(enc, "to_tuple") else (enc[0] if isinstance(enc,(tuple,list)) else enc)
+            if _t.is_tensor(m) and m.shape[1] == 8:
+                d = _DGD(m); return d.sample(generator) if sample_mode == "sample" else d.mode()
+            return m
+        _M.retrieve_latents = _rl
+    except Exception as e:
+        print("retrieve_latents shim skipped:", e)
+    print(f"loading inpaint pipeline from {model_dir} (provider={provider}) ...")
     return ORTDiffusionPipeline.from_pretrained(model_dir, provider=provider, export=False)
 
 
