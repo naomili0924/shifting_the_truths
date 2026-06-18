@@ -22,7 +22,7 @@ are buttons driven by the manifest — never anchored to pixels in the painting.
 
 from __future__ import annotations
 
-from engine import _extract_json  # reuse the tolerant JSON extractor
+from engine import _extract_json, item_present  # reuse tolerant JSON + plot gate
 
 
 # ---- chip anchors (normalized 0..1 over the backdrop) -------------------------
@@ -79,6 +79,134 @@ def item_prompt(item: dict) -> str:
         + ". Close-up still life of one object, centered, dramatic candlelit noir "
         "lighting, plain dark background, painted illustration, no text"
     )
+
+
+def object_prompt(name: str, found_text: str = "") -> str:
+    """English prompt for ONE object embedded *in* the scene (not a plain card).
+
+    Unlike item_prompt (a close-up still life on a dark background), this describes the
+    object as it sits in the room, so the inpaint blends it into the backdrop."""
+    detail = (found_text or "").split(".")[0].strip()
+    base = f"{name}"
+    if detail:
+        base += f", {detail}"
+    return (base + ", a single realistic object resting in the scene, detailed, "
+            "candlelit noir lighting, in focus, no text")
+
+
+# ---- two sub-scenes per act, with embedded collectible + decoy objects --------
+
+# Plot-irrelevant props: inspectable ("touch and check") but never collectible. A small
+# deterministic pool fits the noir-estate setting; each scene draws a couple by index, so
+# the same run is reproducible and no LLM call is needed. Each entry is
+# (en_name, en_flavor, zh_name, zh_flavor): the player sees the localized name/flavor, but
+# the image prompt is always built from the English name (SDXL is English-prompted).
+_DECOYS = [
+    ("an empty wine bottle", "An empty estate vintage. Dust, a tide-line of old red, nothing more.",
+     "一只空酒瓶", "庄园的陈年空瓶，积着灰，瓶壁一圈暗红的酒痕，仅此而已。"),
+    ("a guttered candle stub", "Burned to the holder during the blackout. Just wax and a cold wick.",
+     "一截烧尽的蜡烛", "停电时烧到了底座，只剩蜡油和冷掉的烛芯。"),
+    ("a stack of yellowed ledgers", "Decades of wine accounts. Tedious, and none of them tonight's business.",
+     "一摞发黄的账簿", "几十年的酒庄账目，枯燥乏味，与今晚无关。"),
+    ("a coil of weathered rope", "Garden rope, stiff with damp. It has hung here for years.",
+     "一卷风化的绳子", "花园里的绳子，受潮发硬，在这儿挂了好些年。"),
+    ("a chipped porcelain cup", "Cold tea, a lipstick ghost on the rim. Someone's, long before tonight.",
+     "一只缺口的瓷杯", "冷掉的茶，杯沿一抹口红印，是某人的，远在今晚之前。"),
+    ("a dusty oil lamp", "Unlit, wick dry. A relic from before the estate had wiring.",
+     "一盏积灰的油灯", "没点着，灯芯干枯。庄园通电之前留下的旧物。"),
+    ("a withered potted fern", "Past saving. The estate stopped tending small things a while ago.",
+     "一盆枯萎的蕨", "已经救不活了。庄园早就顾不上这些小东西。"),
+    ("a folded estate map", "A tourist's map of the vineyard. Pretty, and useless to you.",
+     "一张折叠的庄园地图", "游客用的酒庄地图，挺好看，对你没用。"),
+]
+
+
+def _layout(n: int) -> list[dict]:
+    """Spread n objects across the lower-middle of the frame with varied sizes, so they
+    read as 'placed in the room'. Returns normalized {x, y, w, h} centres + sizes."""
+    if n <= 0:
+        return []
+    cols = min(n, 3)
+    out = []
+    for i in range(n):
+        col, row = i % cols, i // cols
+        x = (col + 0.5) / cols
+        y = 0.6 + 0.16 * row
+        # alternate sizes a little so it doesn't look like a grid of identical boxes
+        w = 0.26 if i % 2 == 0 else 0.20
+        h = 0.24 if i % 3 else 0.30
+        out.append({"x": round(min(max(x, 0.12), 0.88), 3),
+                    "y": round(min(y, 0.85), 3), "w": w, "h": h})
+    return out
+
+
+def scene_manifests(case: dict, act: dict, gt, lang: str = "en",
+                    en_case: dict | None = None, decoys_per_scene: int = 2) -> list[dict]:
+    """Build the act's TWO sub-scenes, each with embedded objects.
+
+    Splits the act's spots in half (scene A / scene B). Each scene's objects are the
+    *present* clue items in its spots (kind 'collectible', pickable) plus a couple of
+    plot-irrelevant decoys (kind 'decoy', inspect-only). Game logic never depends on the
+    painted pixels — positions are anchors for hotspot chips, exactly like the old chips.
+
+    Player-facing text (names, found_text, flavor) is in the game language; every IMAGE
+    prompt (base + objects) is built from the English case (``en_case``, matched by item
+    id / act number), because SDXL is English-prompted — so a Chinese game still paints
+    good art. ``en_case`` defaults to ``case`` (an English game)."""
+    en_case = en_case or case
+    act_no = act.get("act")
+    en_act = next((a for a in en_case.get("acts", []) if a.get("act") == act_no), act)
+    en_items = {it["id"]: it for s in en_act.get("spots", [])
+                for it in s.get("items", [])}                 # id -> English item (for prompts)
+    setting = (en_case.get("scenario", {}) or {}).get("setting", "").strip()
+    setting_lead = setting.split(".")[0].strip() if setting else ""
+    act_title_en = en_act.get("title", "").strip()
+
+    spots = act.get("spots", [])
+    half = (len(spots) + 1) // 2
+    groups = [spots[:half], spots[half:]]                     # single-spot acts -> [spot],[]
+
+    scenes = []
+    for gi, group in enumerate(groups):
+        sid = f"{act_no}-{'ab'[gi]}"
+        # Base prompt = ATMOSPHERE ONLY (English). We deliberately do NOT list spot/item
+        # names: clue objects are inpainted in afterwards, and naming e.g. "Diana's body"
+        # in the backdrop prompt conflicts with the no-people style. A coherent location
+        # is all the base needs.
+        head = ". ".join(p for p in (act_title_en, setting_lead) if p) or "A dim interior at night"
+        prompt = f"{head}. A detailed atmospheric establishing shot of the location, {_STYLE_NOTE}"
+
+        # collectibles = present clue items in this group's spots (display localized;
+        # image prompt from the English item with the same id)
+        objects = []
+        for s in group:
+            for item in s.get("items", []):
+                if not item_present(item, gt):
+                    continue
+                en_it = en_items.get(item["id"], item)
+                objects.append({
+                    "id": item["id"], "kind": "collectible",
+                    "name": item["name"], "found_text": item.get("found_text", ""),
+                    "spot_id": s["id"],
+                    "obj_prompt": object_prompt(en_it["name"], en_it.get("found_text", "")),
+                })
+        # decoys = a couple of plot-irrelevant props, chosen deterministically per scene
+        for k in range(decoys_per_scene):
+            en_name, en_flavor, zh_name, zh_flavor = _DECOYS[(act_no * 2 + gi + k) % len(_DECOYS)]
+            objects.append({
+                "id": f"{sid}-decoy{k}", "kind": "decoy",
+                "name": zh_name if lang == "zh" else en_name,
+                "flavor": zh_flavor if lang == "zh" else en_flavor,
+                "obj_prompt": object_prompt(en_name, en_flavor),
+            })
+
+        # place every object
+        for obj, pos in zip(objects, _layout(len(objects))):
+            obj.update(pos)
+
+        scenes.append({"id": sid, "act": act_no, "title": act.get("title", ""),
+                       "prompt": prompt, "objects": objects})
+    return scenes
 
 
 def portrait_prompt(char: dict) -> str:

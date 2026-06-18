@@ -54,28 +54,32 @@ costs:
 # manifest, never from the picture.
 images:
   enabled: true
-  idmc_path: /workspace                           # holds inference_driven_model_compiler
+  idmc_path: /workspace                           # (legacy; unused by the inpaint path)
   provider: CUDAExecutionProvider                 # falls back to no-art if it can't load
   cache_dir: webui/assets/cache                   # served at /assets/cache/<name>
-  # One model per language: English -> SDXL-Turbo (English prompts), Chinese ->
-  # Hunyuan-DiT (Chinese prompts, its strength). Each is loaded lazily on first use.
+  negative: "people, person, hands, text, watermark, signature, frame, border, blurry, lowres, deformed"
+  # Scenes are now built by an INPAINTING model (export_inpaint.py): a base backdrop
+  # (full-mask txt2img) with clue items + decoy props inpainted into it. One English
+  # model serves BOTH languages, because rooms.py builds every image prompt in English
+  # internally — so a Chinese game paints from the same model. Loaded lazily on first use.
+  # Runs SDXL natively via diffusers on the GPU (torch, fp16) — NOT ONNX (onnxruntime-gpu
+  # mis-shapes the inpaint UNet, CPU ONNX is too slow). ONE model: txt2img paints the base
+  # scene reliably, and an inpaint pipeline built from the same weights (from_pipe, no extra
+  # VRAM) embeds the clue/decoy objects into it.
   by_lang:
-    en:
-      model_dir: /dev/shm/sdxl-turbo-onnx
-      width: 512
-      height: 512
-      steps: 1          # SDXL-Turbo is a 1-step distilled model
-      guidance: 0.0
+    en: &inpaint_en
+      model_dir: /dev/shm/sdxl-base   # ephemeral (RAM-backed): re-fetch on restart
+      width: 1024       # SDXL is native 1024
+      height: 1024
+      steps: 26
+      guidance: 7.0
+      dtype: float16
+      variant: fp16
+      device: cuda
       style: >-
         moody noir painted illustration, dramatic candlelight, deep shadows,
-        point-and-click adventure game art, cinematic, atmospheric
-    zh:
-      model_dir: /dev/shm/hunyuan-onnx   # ephemeral: re-export on instance restart
-      width: 1024       # Hunyuan was exported at a fixed 1024x1024
-      height: 1024
-      steps: 20
-      guidance: 6.0
-      style: 电影感的暗调氛围，烛光，写实，精致细节，无文字
+        point-and-click adventure game background art, cinematic, atmospheric, no people, no text
+    zh: *inpaint_en     # same inpaint model + English prompts (built internally)
 
 # Optional voice (text-to-speech) for conversation lines. A thin, lazy, cached
 # layer over the chatterbox-turbo ONNX pipeline exported by the sibling

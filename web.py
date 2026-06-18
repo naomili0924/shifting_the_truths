@@ -94,6 +94,10 @@ class WebGame:
         case_path = (cases.get(self.lang) or gcfg.get(f"case_{self.lang}")
                      or gcfg.get("case", "case.yaml"))
         self.case = load_case(os.path.join(HERE, case_path))
+        # English case too — image prompts are always English (SDXL), even for a zh game.
+        en_path = cases.get("en") or gcfg.get("case", "case.yaml")
+        self.en_case = (self.case if self.lang == "en"
+                        else load_case(os.path.join(HERE, en_path)))
         self.victim = victim_name(self.case)
 
         self.director = Director(self.case, seed=gcfg.get("seed"), lang=self.lang)
@@ -109,7 +113,7 @@ class WebGame:
         self.gt = None
         self.deeds = {}
         self.base_prompt = {}
-        self.room_manifests = {}
+        self.scene_manifests = {}      # act_num -> [scene manifest dicts] (built on roll)
 
         self.extras = {n: [] for n in self.names}
         self.histories = {n: [] for n in self.names}
@@ -139,11 +143,12 @@ class WebGame:
         }
 
         self._img_lock = threading.Lock()
-        self.backdrops: dict[int, str | None] = {}   # act_num -> filename
         self.faces: dict[str, str | None] = {}        # npc name -> filename
-        self.item_images: dict[str, str | None] = {}  # item name -> filename
-        self.images_done = False
-        gen = imagegen.instance(self.lang)   # EN -> SDXL, ZH -> Hunyuan
+        self.item_images: dict[str, str | None] = {}  # item name -> scene-crop filename (evidence thumb)
+        self.scenes: dict[int, list] = {}             # act_num -> [{id,title,backdrop,objects}]
+        self.acts_painted: set = set()                # act nums whose scenes are painted
+        self.collected: set = set()                   # collectible obj ids picked up
+        gen = imagegen.instance(self.lang)            # one inpaint model serves EN + ZH
         self.art_enabled = bool(gen and gen.available())
 
         # Optional voice (chatterbox-turbo ONNX, English only). Suspects get a
@@ -155,10 +160,10 @@ class WebGame:
         tgen = ttsgen.instance(self.lang)
         self.audio_enabled = bool(tgen and tgen.available())
 
-        # Everything heavy runs off the request path, behind the intro.
+        # Everything heavy runs off the request path, behind the intro. The image and
+        # voice models load SEQUENTIALLY inside _setup — loading both torch models at the
+        # same time races on CUDA (meta-tensor error) — so there is no separate warm thread.
         threading.Thread(target=self._setup, daemon=True).start()
-        # Pre-load the voice model + prepare voices so the first line isn't slow.
-        threading.Thread(target=self._warm_audio, daemon=True).start()
 
     def _warm_audio(self):
         if not self.audio_enabled:
@@ -203,19 +208,25 @@ class WebGame:
             self.gt = self.director.roll(selector=self._select)
         except Exception:
             self.gt = self.director.roll()
-        use_judge = bool(self.images_cfg.get("judge_layout"))
-        self.room_manifests = {
-            act["act"]: (
-                rooms.judge_room_layout(self.case, act, self.judge_llm, self.lang)
-                if use_judge else rooms.default_manifest(self.case, act)
-            )
+        # Resolve each act into TWO sub-scenes with embedded collectible + decoy objects.
+        # Cheap (no painting) and depends on the rolled plot (which clues are present).
+        self.scene_manifests = {
+            act["act"]: rooms.scene_manifests(self.case, act, self.gt, self.lang,
+                                              en_case=self.en_case)
             for act in self.case["acts"]
         }
         self.ready = True
 
-        # 2) Paint the rooms/faces/items (backdrop the intro waits for).
+        # 2) Paint Act 1's scenes behind the intro; faces once; then prefetch later acts
+        #    in the background (SDXL inpaint is slow, so we don't paint all acts up front).
+        first = self.case["acts"][0]["act"]
         if self.art_enabled:
-            self._paint_all()
+            self._paint_faces()
+        self._paint_act(first)
+        # Warm the voice model only AFTER the image model has loaded — loading both torch
+        # models concurrently races on CUDA. Now the next acts can paint in the background.
+        self._warm_audio()
+        threading.Thread(target=self._paint_rest, args=(first,), daemon=True).start()
 
         # 3) Deeds + NPC system prompts are only needed in the talk phase (after
         #    the timed search phase), so generate them after the game is playable.
@@ -232,51 +243,78 @@ class WebGame:
         }
 
     # ---- background art painting -----------------------------------
-    def _paint_all(self):
-        gen = imagegen.instance(self.lang)   # EN -> SDXL, ZH -> Hunyuan
+    def _paint_faces(self):
+        """Paint the five fixed suspect faces once (from this game's localized
+        character descriptions). Best-effort; missing faces fall back to initials."""
+        gen = imagegen.instance(self.lang)
         if not gen:
             return
-        # Backdrops, in play order so the first room is ready first.
-        for act in self.case["acts"]:
-            manifest = self.room_manifests.get(act["act"], {})
-            fn = gen.generate(manifest.get("prompt", "")) if manifest else None
-            with self._img_lock:
-                self.backdrops[act["act"]] = fn
-        # The five suspects — painted from this game's (localized) character
-        # descriptions, so a Chinese game prompts Hunyuan in Chinese.
         chars = self.case.get("characters", [])
         for i, name in enumerate(self.names):
             src = chars[i] if i < len(chars) else None
             fn = gen.generate(rooms.portrait_prompt(src)) if src else None
             with self._img_lock:
                 self.faces[name] = fn
-        # Items that are actually present in this rolled plot (manifest first).
-        for act in self.case["acts"]:
-            for spot in act.get("spots", []):
-                for item in spot.get("items", []):
-                    if not item_present(item, self.gt):
-                        continue
-                    fn = gen.generate(rooms.item_prompt(item))
-                    with self._img_lock:
-                        self.item_images[item["name"]] = fn
+
+    def _paint_act(self, act_no):
+        """Compose this act's two sub-scenes (base backdrop + embedded objects). Records
+        each collectible's scene-crop as its evidence thumbnail. Safe with no art (scenes
+        are still registered with backdrop=None so the UI shows object chips on a plain
+        backdrop). Idempotent per act."""
+        if act_no in self.acts_painted:
+            return
+        gen = imagegen.instance(self.lang)
+        painted = []
+        for man in self.scene_manifests.get(act_no, []):
+            backdrop, crops = (gen.compose_scene(man["prompt"], man["objects"])
+                               if gen else (None, {}))
+            if crops:
+                for obj in man["objects"]:
+                    if obj.get("kind") == "collectible" and obj["id"] in crops:
+                        with self._img_lock:
+                            self.item_images[obj["name"]] = crops[obj["id"]]
+            painted.append({**man, "backdrop": backdrop})
         with self._img_lock:
-            self.images_done = True
+            self.scenes[act_no] = painted
+            self.acts_painted.add(act_no)
+
+    def _paint_rest(self, first_act):
+        """Prefetch the remaining acts' scenes in the background so they're ready by the
+        time the player gets there (each act's talk phase buys painting time)."""
+        for act in self.case["acts"]:
+            if act["act"] != first_act:
+                self._paint_act(act["act"])
 
     def _image_state(self):
         cur = self._cur()
         act_num = cur["act"]["act"] if cur else None
         with self._img_lock:
-            backdrop = self.backdrops.get(act_num) if act_num else None
             faces = dict(self.faces)
-            done = self.images_done
-        manifest = self.room_manifests.get(act_num, {}) if act_num else {}
+            painted = self.scenes.get(act_num) if act_num else None
+            collected = set(self.collected)
+            done = act_num in self.acts_painted if act_num else False
+        # Fall back to the (always-available) manifest with no backdrop until painted.
+        src = painted if painted is not None else \
+            [{**m, "backdrop": None} for m in (self.scene_manifests.get(act_num, []) if act_num else [])]
+        scenes = []
+        for sc in (src or []):
+            objs = [{"id": o["id"], "kind": o["kind"], "name": o["name"],
+                     "x": o.get("x", .5), "y": o.get("y", .5),
+                     "w": o.get("w", .22), "h": o.get("h", .22),
+                     "collected": o["id"] in collected}
+                    for o in sc.get("objects", [])]
+            scenes.append({
+                "id": sc["id"], "title": sc.get("title", ""),
+                "backdrop": f"/assets/cache/{sc['backdrop']}" if sc.get("backdrop") else None,
+                "objects": objs,
+            })
         return {
             "art_enabled": self.art_enabled,
             "images_done": done,
-            "backdrop": f"/assets/cache/{backdrop}" if backdrop else None,
+            "backdrop": scenes[0]["backdrop"] if scenes else None,   # intro waits on this
             "faces": {n: (f"/assets/cache/{fn}" if fn else None)
                       for n, fn in faces.items()},
-            "chips": manifest.get("spots", {}),
+            "scenes": scenes,
         }
 
     # ---- director selector (judge picks culprit) --------------------
@@ -339,6 +377,57 @@ class WebGame:
                                       "found_text": i["found_text"]})
         return {"ok": True}
 
+    # ---- scene objects: pick up clues / inspect decoys --------------
+    def _find_obj(self, obj_id):
+        """Locate an object by id within the current act's scene manifests."""
+        cur = self._cur()
+        if not cur:
+            return None
+        for sc in self.scene_manifests.get(cur["act"]["act"], []):
+            for o in sc.get("objects", []):
+                if o["id"] == obj_id:
+                    return o
+        return None
+
+    def pickup(self, obj_id):
+        """Collect a clue object: add it to the evidence pouch (for showing suspects and
+        the accusation), mark it collected. Only collectibles present in the rolled plot
+        are pickable — decoys are not."""
+        if not self.ready:
+            return {"error": "loading"}
+        cur = self._cur()
+        if not cur or cur["phase"]["type"] != "search":
+            return {"error": "not_search"}
+        o = self._find_obj(obj_id)
+        if not o:
+            return {"error": "bad_obj"}
+        if o.get("kind") != "collectible":
+            return {"error": "not_collectible"}
+        if obj_id in self.collected:
+            return {"ok": True, "already": True, "name": o["name"]}
+        self.collected.add(obj_id)
+        if o["name"] not in self._have:
+            self._have.add(o["name"])
+            self.evidence.append({"name": o["name"],
+                                  "found_text": o.get("found_text", "")})
+        fn = self.item_images.get(o["name"])
+        return {"ok": True, "name": o["name"], "found_text": o.get("found_text", ""),
+                "image": f"/assets/cache/{fn}" if fn else None}
+
+    def inspect(self, obj_id):
+        """Look at an object without picking it up. Decoys return flavour text; a
+        collectible peeked at returns its found_text (it is still pickable)."""
+        if not self.ready:
+            return {"error": "loading"}
+        o = self._find_obj(obj_id)
+        if not o:
+            return {"error": "bad_obj"}
+        if o.get("kind") == "collectible":
+            return {"ok": True, "kind": "collectible", "name": o["name"],
+                    "text": o.get("found_text", ""), "collected": obj_id in self.collected}
+        return {"ok": True, "kind": "decoy", "name": o["name"],
+                "text": o.get("flavor", "")}
+
     def talk(self, name, text):
         if not self.ready:
             return {"error": "loading"}
@@ -389,28 +478,32 @@ class WebGame:
         return {"ok": True, "reply": reply}
 
     def hint(self):
-        """Last-resort help: return up to (2 - found) UNSEARCHED spots in the
-        current search that actually contain a present item, so the player can
-        reach at least two clues. Reveals only the minimum needed."""
+        """Last-resort help when time is short and the player is short of two clues:
+        point (gently) at up to (2 - collected) uncollected clue OBJECTS in the current
+        act's scenes. Also returns unsearched spots for the classic UI. Minimum reveal."""
         if not self.ready:
-            return {"spots": []}
+            return {"objects": [], "spots": []}
         cur = self._cur()
         if not cur or cur["phase"]["type"] != "search":
-            return {"spots": []}
-        act = cur["act"]
-        found_ct = sum(len(self.found.get(s["id"], [])) for s in act["spots"])
-        need = max(0, 2 - found_ct)
-        if need <= 0:
-            return {"spots": []}
-        targets = []
-        for s in act["spots"]:
-            if s["id"] in self.searched:
-                continue
-            if any(item_present(i, self.gt) for i in s.get("items", [])):
-                targets.append(s["id"])
-            if len(targets) >= need:
-                break
-        return {"spots": targets}
+            return {"objects": [], "spots": []}
+        act = cur["act"]; act_no = act["act"]
+        collectibles = [(sc["id"], o) for sc in self.scene_manifests.get(act_no, [])
+                        for o in sc.get("objects", []) if o.get("kind") == "collectible"]
+        got = sum(1 for _, o in collectibles if o["id"] in self.collected)
+        need = max(0, 2 - got)
+        objects = [{"scene_id": sid, "obj_id": o["id"]}
+                   for sid, o in collectibles if o["id"] not in self.collected][:need]
+        # classic-UI fallback: unsearched spots that hold a present item
+        spots = []
+        if need > 0:
+            for s in act["spots"]:
+                if s["id"] in self.searched:
+                    continue
+                if any(item_present(i, self.gt) for i in s.get("items", [])):
+                    spots.append(s["id"])
+                if len(spots) >= need:
+                    break
+        return {"objects": objects, "spots": spots}
 
     def next_phase(self):
         if not self.ready:
@@ -650,6 +743,24 @@ def api_search():
     if not g:
         return jsonify({"error": "no_session"}), 404
     r = g.search((request.get_json(silent=True) or {}).get("spot_id", ""))
+    return _respond(g, {"action": r})
+
+
+@app.post("/api/pickup")
+def api_pickup():
+    sid, g = _game()
+    if not g:
+        return jsonify({"error": "no_session"}), 404
+    r = g.pickup((request.get_json(silent=True) or {}).get("obj_id", ""))
+    return _respond(g, {"action": r})
+
+
+@app.post("/api/inspect")
+def api_inspect():
+    sid, g = _game()
+    if not g:
+        return jsonify({"error": "no_session"}), 404
+    r = g.inspect((request.get_json(silent=True) or {}).get("obj_id", ""))
     return _respond(g, {"action": r})
 
 

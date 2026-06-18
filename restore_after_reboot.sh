@@ -4,7 +4,7 @@
 # What survives a *stop/start* reboot: the /venv/main pip installs, the
 # /etc/ld.so.conf.d CUDA-12 registration, /workspace/.env, and (if /workspace
 # is a host volume) the voice model. What does NOT: anything under /dev/shm
-# (RAM-backed) — i.e. the SDXL and Hunyuan image models. A full *recycle*
+# (RAM-backed) — i.e. the SDXL scene model. A full *recycle*
 # wipes the container filesystem, so the pip stack would need reinstalling
 # first (see SETUP_AND_PLAY.md); this script only restores models + config and
 # (re)starts the server, all idempotently — safe to run repeatedly.
@@ -25,8 +25,12 @@ if [ -f "$ENV_FILE" ]; then
   set -a; . "$ENV_FILE"; set +a
 fi
 if [ -z "${HF_TOKEN:-}" ]; then
-  echo "WARN: HF_TOKEN not set (needed to pull private art/voice models). Put it in $ENV_FILE."
+  echo "WARN: HF_TOKEN not set (needed for the private voice model). Put it in $ENV_FILE."
 fi
+# Keep big model downloads on the RAM disk, not the small (~32G) container overlay.
+export HF_HOME="${HF_HOME:-/dev/shm/hf}"
+export TMPDIR="${TMPDIR:-/dev/shm/tmp}"
+mkdir -p "$HF_HOME" "$TMPDIR"
 
 # 2) Re-register the bundled CUDA-12 libs so onnxruntime-gpu finds cublas/cudnn
 #    (the torch cu128 wheel ships them under site-packages/nvidia/*/lib). The
