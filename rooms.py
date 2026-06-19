@@ -101,6 +101,8 @@ def object_prompt(name: str, found_text: str = "") -> str:
 # the same run is reproducible and no LLM call is needed. Each entry is
 # (en_name, en_flavor, zh_name, zh_flavor): the player sees the localized name/flavor, but
 # the image prompt is always built from the English name (SDXL is English-prompted).
+_SCENE_TARGET = 6   # aim for ~6 clickable spots per scene (clues + decoys)
+
 _DECOYS = [
     ("an empty wine bottle", "An empty estate vintage. Dust, a tide-line of old red, nothing more.",
      "一只空酒瓶", "庄园的陈年空瓶，积着灰，瓶壁一圈暗红的酒痕，仅此而已。"),
@@ -190,8 +192,13 @@ def scene_manifests(case: dict, act: dict, gt, lang: str = "en",
                     "spot_id": s["id"],
                     "obj_prompt": object_prompt(en_it["name"], en_it.get("found_text", "")),
                 })
-        # decoys = a couple of plot-irrelevant props, chosen deterministically per scene
-        for k in range(decoys_per_scene):
+        # decoys = plot-irrelevant props, chosen deterministically per scene. Aim for a
+        # richer scene of ~6 clickable spots total (more to explore), with at least 3
+        # decoys, capped by the pool size.
+        n_coll = len(objects)
+        n_dec = max(3, min(7, _SCENE_TARGET) - n_coll)
+        n_dec = min(max(n_dec, 3), len(_DECOYS))
+        for k in range(n_dec):
             en_name, en_flavor, zh_name, zh_flavor = _DECOYS[(act_no * 2 + gi + k) % len(_DECOYS)]
             objects.append({
                 "id": f"{sid}-decoy{k}", "kind": "decoy",

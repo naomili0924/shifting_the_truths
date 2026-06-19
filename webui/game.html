@@ -91,10 +91,11 @@
     </div>
   </div></div>
 
-  <!-- gossip (between acts) overlay -->
+  <!-- shared popup card: reused for between-acts gossip, found/picked items, inspect,
+       and the evidence pouch. The subtitle is set per use (only the gossip case fills it). -->
   <div id="gossip" class="overlay"><div class="card">
     <h2 id="gossipTitle">Between the acts…</h2>
-    <div class="muted">Careless questions travel. Word reaches the suspects.</div>
+    <div class="muted" id="gossipSub" style="display:none"></div>
     <div id="gossipBody" style="margin-top:12px"></div>
     <div class="row" style="margin-top:14px; justify-content:flex-end">
       <button class="btn primary" onclick="closeOverlay('gossip')">Continue ▸</button>
@@ -203,6 +204,10 @@ function _playWhenReady(url, done, tries=0){
 }
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
 function showOverlay(id){ document.getElementById(id).classList.add('show'); }
+// The shared popup's subtitle: only the between-acts gossip sets it; everything else clears
+// it (so "Careless questions travel…" doesn't show on every item pickup/inspect).
+function setGossipSub(text){ const e=document.getElementById('gossipSub'); if(!e) return;
+  e.textContent=text||''; e.style.display=text?'block':'none'; }
 const L = () => (G.state && G.state.web) || {};
 
 // ============================ Boot / Start ==================================
@@ -371,15 +376,19 @@ class PlayScene extends Phaser.Scene {
       (sc?sc.objects||[]:[]).forEach(o=>{
         const ox=clamp(o.x)*SW, oy=clamp(o.y)*SW;
         const ow=Math.max(96,(o.w||0.2)*SW), oh=Math.max(96,(o.h||0.2)*SW);
-        const rect=this.world(this.add.rectangle(ox,oy,ow,oh,0xc9a14a,0)
-          .setStrokeStyle(2,0xc9a14a,0).setInteractive({useHandCursor:true}));
+        // No boxes. A soft warm glow (additive, so it reads as light not a shape) fades in
+        // only while hovered, lighting up the prop under the cursor.
+        const glow=this.world(this.add.ellipse(ox,oy,ow*1.3,oh*1.3,0xffd98a,0));
+        glow.setBlendMode(Phaser.BlendModes.ADD);
         if(o.collected){
-          rect.setStrokeStyle(2,0x5a8a5a,0.45);
-          this.world(this.add.text(ox,oy,'✓',{fontSize:'32px',color:'#5a8a5a'}).setOrigin(.5));
+          this.world(this.add.text(ox,oy,'✓',{fontSize:'30px',color:'#9fe0a0'})
+            .setOrigin(.5)).setAlpha(0.8);   // quiet "collected" tick
         }
-        rect.on('pointerover',()=>{ if(!o.collected) rect.setStrokeStyle(2,0xc9a14a,0.85); });
-        rect.on('pointerout', ()=>{ if(!o.collected) rect.setStrokeStyle(2,0xc9a14a,0); });
-        rect.on('pointerup',()=>{
+        // invisible click target over the prop; cursor turns to a hand on hover
+        const zone=this.world(this.add.zone(ox,oy,ow,oh).setInteractive({useHandCursor:true}));
+        zone.on('pointerover',()=>{ if(!o.collected){ this.tweens.add({targets:glow,alpha:0.5,duration:150}); } });
+        zone.on('pointerout', ()=>{ this.tweens.add({targets:glow,alpha:0,duration:220}); });
+        zone.on('pointerup',()=>{
           if(this._dragged) return;
           if(o.kind==='collectible'){ o.collected ? doInspect(o.id) : doPickup(o.id); }
           else doInspect(o.id);
@@ -552,6 +561,7 @@ function itemCard(it){
 }
 function showSpotResult(sp){
   if(!(sp.found||[]).length){ toast('Nothing here.'); return; }
+  setGossipSub('');
   document.getElementById('gossipTitle').textContent='You found something';
   document.getElementById('gossipBody').innerHTML=sp.found.map(itemCard).join('<hr style="border-color:#2a241c">');
   showOverlay('gossip');
@@ -568,6 +578,7 @@ async function doPickup(objId){
   playScene().build();
 }
 function showPickupResult(a){
+  setGossipSub('');
   document.getElementById('gossipTitle').textContent=(L().picked_up)||'You picked something up';
   document.getElementById('gossipBody').innerHTML=itemCard({name:a.name,found_text:a.found_text,image:a.image});
   showOverlay('gossip');
@@ -577,6 +588,7 @@ async function doInspect(objId){
   if(r && r.images){ G.state=r; }
   const a=(r&&r.action)||{};
   if(a.error){ toast('Nothing to see.'); return; }
+  setGossipSub('');
   document.getElementById('gossipTitle').textContent=a.name||'A closer look';
   let body='<span class="muted">'+escapeHtml(a.text||'')+'</span>';
   if(a.kind==='collectible' && !a.collected){
@@ -670,6 +682,7 @@ async function showEv(item){
 
 function openEvidence(){
   const ev=G.state.evidence||[];
+  setGossipSub('');
   document.getElementById('gossipTitle').textContent='Evidence pouch';
   document.getElementById('gossipBody').innerHTML = ev.length
     ? ev.map(itemCard).join('<hr style="border-color:#2a241c">')
@@ -680,6 +693,7 @@ function openEvidence(){
 async function doNext(){
   const r=await api('/next',{}); G.state=r;
   if(r.gossip && r.gossip.length){
+    setGossipSub('Careless questions travel. Word reaches the suspects.');
     document.getElementById('gossipTitle').textContent='Between the acts…';
     document.getElementById('gossipBody').innerHTML = r.gossip.map(g=>
       `<div style="margin:8px 0"><b>${g.name}</b><br>`+

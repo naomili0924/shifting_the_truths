@@ -53,8 +53,10 @@ between them with the on-screen ◂ / ▸ arrows. Within a scene:
   scene) and are marked collected.
 - **Irrelevant props (decoys) are also inpainted in** — you can **inspect** them
   ("touch and check") but they can't be picked up and never enter evidence.
-- **Hotspots are chips, not pixels** — each object is a clickable region placed
-  from the manifest box, so even a weak paint never breaks picking it up.
+- **~6 clickable spots per scene** (clues + decoy props) for more to explore.
+- **Hotspots are invisible regions, not boxes** — placed from the manifest box, so
+  even a weak paint never breaks clicking. Hovering a prop turns the cursor to a hand
+  and fades in a **soft warm glow** over it (no outlines/boxes).
 - **Five fixed faces** (the suspects) are painted once and cached, reused every run.
 
 One model does both jobs: a **txt2img** pipeline paints the base scene, and an
