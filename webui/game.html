@@ -147,6 +147,10 @@ function toast(msg){
   const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block';
   clearTimeout(toast._t); toast._t=setTimeout(()=>t.style.display='none', 2200);
 }
+// Persistent "working…" indicator (no auto-hide) for actions with background work.
+function busy(msg){ const t=document.getElementById('toast'); clearTimeout(toast._t);
+  t.textContent='⏳ '+msg; t.style.display='block'; }
+function busyDone(){ const t=document.getElementById('toast'); t.style.display='none'; }
 
 // ---- voice playback ------------------------------------------------------
 // Lines are synthesized on the server in the background; the WAV URL is known
@@ -208,8 +212,7 @@ function _playWhenReady(url, done, tries=0){
     if(p&&p.then) p.then(()=>_voiceStatus('▶ playing')).catch(()=>{ _voiceUnlocked=false; _voiceStatus('⚠ blocked — click 🔊'); _soundHint(); end(); });
   }).catch(()=>{ if(tries<60) setTimeout(()=>_playWhenReady(url,done,tries+1),500); else done(); });
 }
-let _overlayClosedAt = 0;
-function closeOverlay(id){ document.getElementById(id).classList.remove('show'); _overlayClosedAt = performance.now(); }
+function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
 // Play the suspect's lip-sync talking-head video (its audio IS the reply voice). Polls
 // until the MP4 lands (generated in the background), swaps the portrait for the video,
 // and falls back to audio-only if the video never arrives or can't autoplay.
@@ -232,11 +235,11 @@ function playTalk(videoUrl, audioUrl){
   tryPlay();
 }
 function showOverlay(id){ document.getElementById(id).classList.add('show'); }
-// True while a popup is open, or for a moment after one closes — used to swallow the
-// click that dismissed the popup so it doesn't "fall through" to the Phaser hotspot/button
-// underneath the Continue button (which would re-open the card in a loop).
-function overlayBusy(){ return !!document.querySelector('.overlay.show')
-  || (performance.now() - _overlayClosedAt) < 400; }
+// True only while a popup is actually open — Phaser world/UI clicks are ignored then. The
+// "fall-through" click that *dismissed* a popup is handled by the per-gesture
+// _gestureOnCanvas flag (a press on the canvas), so a deliberate click right after closing
+// still works — no time window blocking the first click.
+function overlayBusy(){ return !!document.querySelector('.overlay.show'); }
 // The shared popup's subtitle: only the between-acts gossip sets it; everything else clears
 // it (so "Careless questions travel…" doesn't show on every item pickup/inspect).
 function setGossipSub(text){ const e=document.getElementById('gossipSub'); if(!e) return;
@@ -326,6 +329,11 @@ class PlayScene extends Phaser.Scene {
     // drag-to-pan (only while exploring; ignored over fixed UI clicks)
     this.input.on('pointerdown', p=>{
       this._d={x:p.x,y:p.y,sx:cam.scrollX,sy:cam.scrollY}; this._dragged=false;
+      // This fires only when the press lands on the CANVAS — not on a DOM overlay button.
+      // So it marks a genuine click that began in the world; a click that merely closed an
+      // overlay (press on the overlay) won't set it, letting us ignore that "fall-through"
+      // pointerup without blocking the player's next deliberate click (no time window).
+      this._gestureOnCanvas=true;
       if(this.explore) this.input.setDefaultCursor('grabbing');
     });
     this.input.on('pointermove', p=>{
@@ -334,7 +342,11 @@ class PlayScene extends Phaser.Scene {
       if(Math.abs(dx)+Math.abs(dy)>6) this._dragged=true;
       cam.scrollX=this._d.sx-dx/cam.zoom; cam.scrollY=this._d.sy-dy/cam.zoom;
     });
-    this.input.on('pointerup', ()=>{ this._d=null; if(this.explore) this.input.setDefaultCursor('grab'); });
+    this.input.on('pointerup', ()=>{ this._d=null; if(this.explore) this.input.setDefaultCursor('grab');
+      // reset AFTER this event's gameobject handlers have run (deferred), so the next
+      // gesture must set _gestureOnCanvas afresh via a real canvas press.
+      setTimeout(()=>{ this._gestureOnCanvas=false; }, 0);
+    });
     this.input.on('wheel', (p,go,dx,dy)=>{ if(this.explore) this.zoomBy(dy>0?0.88:1.14); });
     // Separate UI camera that never pans/zooms, so chrome stays put while the
     // main camera roams the scene.
@@ -422,7 +434,7 @@ class PlayScene extends Phaser.Scene {
         zone.on('pointerover',()=>{ if(!o.collected){ this.tweens.add({targets:glow,alpha:0.5,duration:150}); } });
         zone.on('pointerout', ()=>{ this.tweens.add({targets:glow,alpha:0,duration:220}); });
         zone.on('pointerup',()=>{
-          if(this._dragged || overlayBusy()) return;   // ignore the click that closed a popup
+          if(this._dragged || overlayBusy() || !this._gestureOnCanvas) return;   // ignore the click that closed a popup
           if(o.kind==='collectible'){ o.collected ? doInspect(o.id) : doPickup(o.id); }
           else doInspect(o.id);
         });
@@ -475,18 +487,18 @@ class PlayScene extends Phaser.Scene {
 
     // evidence + next (fixed)
     fix(this.add.text(20,H-34, `🗂 ${(st.evidence||[]).length}`, {fontSize:'16px',color:'#bcb3a3'})
-      .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) openEvidence(); }));
+      .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy() && this._gestureOnCanvas) openEvidence(); }));
     if(kind!=='accuse' && kind!=='over'){
       const nextLabel = (st.phase_index>=st.phase_total) ? 'The police arrive ▸' : 'End phase ▸';
       fix(this.add.text(W-20,H-34, nextLabel, {fontSize:'15px',color:'#1a1408',
         backgroundColor:'#c9a14a', padding:{x:10,y:6}, fontStyle:'bold'}).setOrigin(1,0)
-        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) doNext(); }));
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy() && this._gestureOnCanvas) doNext(); }));
     }
     // zoom controls (search only) — symbols, no words
     if(kind==='search'){
       const mkZoom=(label,dx,f)=> fix(this.add.text(W-20-dx, H-78, label, {fontSize:'22px',color:'#e8e2d6',
         backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(1,0)
-        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) this.zoomBy(f); }));
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy() && this._gestureOnCanvas) this.zoomBy(f); }));
       mkZoom('+',0,1.25); mkZoom('−',52,0.8);
     }
     // scene navigation (search only, when the act has more than one sub-scene)
@@ -494,7 +506,7 @@ class PlayScene extends Phaser.Scene {
       const cnt=img.scenes.length, idx=Math.min(this.sceneIdx,cnt-1), navY=H-78;
       const arrow=(label,x,onClick)=> fix(this.add.text(x, navY, label, {fontSize:'22px',
         color:'#e8e2d6', backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(0,0)
-        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) onClick(); }));
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy() && this._gestureOnCanvas) onClick(); }));
       arrow('◂',20,()=>this.gotoScene(idx-1));
       fix(this.add.text(72, navY+5, `Scene ${idx+1}/${cnt}`, {fontSize:'14px',color:'#bcb3a3'}).setOrigin(0,0));
       arrow('▸',182,()=>this.gotoScene(idx+1));
@@ -535,7 +547,7 @@ class PlayScene extends Phaser.Scene {
       g.setInteractive({useHandCursor:true})
        .on('pointerover',()=>g.setScale(1.05))
        .on('pointerout', ()=>g.setScale(1))
-       .on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) openChat(c.name); });
+       .on('pointerup',()=>{ if(!this._dragged && !overlayBusy() && this._gestureOnCanvas) openChat(c.name); });
     }
     return g;
   }
@@ -741,17 +753,24 @@ function openEvidence(){
   showOverlay('gossip');
 }
 
+let _advancing=false;
 async function doNext(){
-  const r=await api('/next',{}); G.state=r;
-  if(r.gossip && r.gossip.length){
-    setGossipSub('Careless questions travel. Word reaches the suspects.');
-    document.getElementById('gossipTitle').textContent='Between the acts…';
-    document.getElementById('gossipBody').innerHTML = r.gossip.map(g=>
-      `<div style="margin:8px 0"><b>${g.name}</b><br>`+
-      g.lines.map(l=>`<span class="muted">• ${escapeHtml(l)}</span>`).join('<br>')+`</div>`).join('');
-    showOverlay('gossip');
-  }
-  playScene().refresh();
+  if(_advancing) return;                         // ignore extra clicks while it works
+  _advancing=true;
+  busy((L().ending_phase)||'Ending the phase…');  // immediate feedback (gossip can take a few seconds)
+  try{
+    const r=await api('/next',{}); G.state=r;
+    if(r.gossip && r.gossip.length){
+      setGossipSub('Careless questions travel. Word reaches the suspects.');
+      document.getElementById('gossipTitle').textContent='Between the acts…';
+      document.getElementById('gossipBody').innerHTML = r.gossip.map(g=>
+        `<div style="margin:8px 0"><b>${g.name}</b><br>`+
+        g.lines.map(l=>`<span class="muted">• ${escapeHtml(l)}</span>`).join('<br>')+`</div>`).join('');
+      showOverlay('gossip');
+    }
+    playScene().refresh();
+  } catch(e){ toast('That didn’t go through — try again.'); }
+  finally{ _advancing=false; busyDone(); }
 }
 
 function openAccuse(){
