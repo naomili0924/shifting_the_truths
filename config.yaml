@@ -81,10 +81,11 @@ images:
         point-and-click adventure game background art, cinematic, atmospheric, no people, no text
     zh: *inpaint_en     # same inpaint model + English prompts (built internally)
 
-# Optional voice (text-to-speech) for conversation lines. A thin, lazy, cached
-# layer over the chatterbox-turbo ONNX pipeline exported by the sibling
-# inference_driven_model_compiler. English only — a Chinese game gets no audio
-# (graceful, like a missing image model). Restore the model with restore_models.sh.
+# Optional voice (text-to-speech) for conversation lines. A thin, lazy, cached layer over
+# chatterbox. English uses the fast chatterbox-turbo ONNX pipeline (sibling
+# inference_driven_model_compiler); 中文 uses the full chatterbox MULTILINGUAL model
+# (language_id: zh). Both clone the same public-domain reference clips. Fail-soft: if a
+# model can't load, that language just has no audio.
 audio:
   enabled: true
   idmc_path: /workspace                  # holds inference_driven_model_compiler
@@ -94,19 +95,31 @@ audio:
   voices_dir: webui/assets/voices        # reference clips (CMU Arctic, public domain)
   player_voice: narrator                 # the player's own questions
   default_voice: female_a                # any suspect not in `assign`
-  # suspect display name -> voice id (gender-matched; English cast).
+  # suspect display name -> voice id (gender-matched). Both the English and 中文 casts are
+  # listed, so a Chinese game gets gender-matched voices too.
   assign:
     Marco Chen: male_a
     James Okafor: male_b
     Elena Voss-Reyes: female_a
     Dr. Priya Sharma: female_b
     Sofia Lindqvist: female_a
+    陈马可: male_a
+    詹姆斯·奥卡福: male_b
+    埃琳娜·沃斯-雷耶斯: female_a
+    普丽娅·夏尔马: female_b
+    索菲娅·林德奎斯特: female_a
+  _voices: &tts_voices                    # voice id -> reference wav (in voices_dir)
+    male_a: male_a.wav
+    male_b: male_b.wav
+    female_a: female_a.wav
+    female_b: female_b.wav
+    narrator: narrator.wav
   by_lang:
     en:
+      backend: turbo_onnx                # fast English ONNX pipeline
       model_dir: /workspace/models/chatterbox-turbo-onnx
-      voices:                            # voice id -> reference wav (in voices_dir)
-        male_a: male_a.wav
-        male_b: male_b.wav
-        female_a: female_a.wav
-        female_b: female_b.wav
-        narrator: narrator.wav
+      voices: *tts_voices
+    zh:
+      backend: multilingual              # full chatterbox model, downloads on first use
+      language_id: zh
+      voices: *tts_voices

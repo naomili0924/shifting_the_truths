@@ -116,8 +116,12 @@ from the text and uses to colour the delivery — chatterbox-turbo ignores
 tremor for nervous) and varies `temperature`. So an angry suspect sounds sharper
 and faster, a sad one slower and lower.
 
-**English only.** chatterbox-turbo speaks English, so a Chinese game gets no audio
-(`audio.by_lang` has no `zh` entry → `ttsgen.instance("zh")` returns `None`).
+**Two voice backends, one per language.** English uses the fast **chatterbox-turbo
+ONNX** pipeline (`backend: turbo_onnx`); 中文 uses the full **chatterbox multilingual**
+model (`backend: multilingual`, `language_id: zh`), which downloads on first use and
+speaks Chinese with native emotion (the full model honors `exaggeration`, which turbo
+ignores). Both clone the same reference clips and are selected via `audio.by_lang`; a
+language with no entry simply gets no audio (`ttsgen.instance(lang)` returns `None`).
 
 **Plays while the reply is generated.** When you ask a question, the browser
 voices *your* line immediately (via `/api/say`) while the server is still

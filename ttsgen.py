@@ -50,6 +50,18 @@ _EMO = {
 }
 _EMO_DEFAULT = (0.8, 1.0, 0.0, 1.0, 0.0)
 
+# For the multilingual (full) model, emotion is native: (exaggeration, cfg_weight,
+# temperature). exaggeration = intensity, lower cfg_weight = slower/heavier.
+_EMO_MTL = {
+    "angry":     (1.10, 0.5,  0.85),
+    "nervous":   (0.85, 0.6,  0.9),
+    "defensive": (0.7,  0.5,  0.8),
+    "cold":      (0.4,  0.45, 0.75),
+    "sad":       (0.6,  0.4,  0.8),
+    "calm":      (0.45, 0.5,  0.8),
+}
+_EMO_MTL_DEFAULT = (0.5, 0.5, 0.8)
+
 # chatterbox's s3tokenizer ships float64 mel filters (from librosa) that clash
 # with float32 STFT magnitudes during voice-cloning. Patch the class once, at
 # import time, entirely from here (no edit to the chatterbox package).
@@ -84,6 +96,10 @@ class TTSGen:
     def __init__(self, cfg: dict | None = None):
         cfg = cfg or {}
         self.enabled = bool(cfg.get("enabled", True))
+        # backend: "turbo_onnx" (English, fast idmc ONNX) | "multilingual" (full torch
+        # model, speaks zh/etc. with native emotion). language_id is the chatterbox code.
+        self.backend = cfg.get("backend", "turbo_onnx")
+        self.language_id = cfg.get("language_id", "en")
         self.model_dir = cfg.get("model_dir", "/workspace/models/chatterbox-turbo-onnx")
         self.idmc_path = cfg.get("idmc_path", "/workspace")
         self.provider = cfg.get("provider", "CUDAExecutionProvider")
@@ -109,7 +125,11 @@ class TTSGen:
         return os.path.isfile(os.path.join(self.model_dir, "t3_backbone", "model.onnx"))
 
     def _can_attempt(self) -> bool:
-        return self.enabled and not self._load_failed and self._model_present()
+        if not self.enabled or self._load_failed:
+            return False
+        if self.backend == "multilingual":
+            return True            # the multilingual checkpoint downloads on load
+        return self._model_present()
 
     def available(self) -> bool:
         return self._can_attempt()
@@ -129,17 +149,26 @@ class TTSGen:
             if self._pipe is not None or self._load_failed:
                 return self._pipe
             try:
-                if self.idmc_path and self.idmc_path not in sys.path:
-                    sys.path.insert(0, self.idmc_path)
                 _patch_s3tokenizer()
-                from inference_driven_model_compiler.ort_chatterbox import (
-                    ORTChatterboxPipeline,
-                )
-                logger.info("Loading chatterbox-turbo ONNX pipeline from %s", self.model_dir)
-                self._pipe = ORTChatterboxPipeline.from_pretrained(
-                    self.model_dir, device=self.device, provider=self.provider
-                )
-                logger.info("chatterbox-turbo ONNX pipeline ready.")
+                if self.backend == "multilingual":
+                    import torch
+                    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+                    dev = ("cuda" if (self.device == "cuda" and torch.cuda.is_available())
+                           else "cpu")
+                    logger.info("Loading chatterbox multilingual model (device=%s)", dev)
+                    self._pipe = ChatterboxMultilingualTTS.from_pretrained(device=dev)
+                    logger.info("chatterbox multilingual model ready.")
+                else:
+                    if self.idmc_path and self.idmc_path not in sys.path:
+                        sys.path.insert(0, self.idmc_path)
+                    from inference_driven_model_compiler.ort_chatterbox import (
+                        ORTChatterboxPipeline,
+                    )
+                    logger.info("Loading chatterbox-turbo ONNX pipeline from %s", self.model_dir)
+                    self._pipe = ORTChatterboxPipeline.from_pretrained(
+                        self.model_dir, device=self.device, provider=self.provider
+                    )
+                    logger.info("chatterbox-turbo ONNX pipeline ready.")
             except Exception as exc:  # noqa: BLE001 - never propagate
                 self._load_failed = True
                 logger.warning("Voice disabled (TTS pipeline load failed): %s", exc)
@@ -153,6 +182,8 @@ class TTSGen:
             return
         if self._ensure_pipe() is None:
             return
+        if self.backend == "multilingual":
+            return                 # voices are passed per call via audio_prompt_path
         for v in (voices or list(self.voices)):
             self._prepare_voice(v)
 
@@ -235,18 +266,30 @@ class TTSGen:
         if pipe is None:
             return None
 
-        temperature, rate, semis, gain, tremor = _EMO.get(emotion, _EMO_DEFAULT)
         with self._lock:
             if os.path.isfile(path):          # another thread may have just made it
                 return name
             try:
-                conds = self._prepare_voice(voice)
-                if conds is None:
-                    return None
-                pipe.tts.conds = conds        # select this voice (reuse prepared conds)
-                wav = pipe.generate(text, temperature=temperature)   # (1, N) torch @ pipe.sr
-                arr = wav.squeeze(0).detach().cpu().numpy()
-                arr = self._shape(arr, int(pipe.sr), rate, semis, gain, tremor)
+                if self.backend == "multilingual":
+                    # Full model: emotion is native (exaggeration/cfg/temperature); the
+                    # voice is cloned from its reference clip via audio_prompt_path.
+                    ex, cfgw, temp = _EMO_MTL.get(emotion, _EMO_MTL_DEFAULT)
+                    ref = self._voice_path(voice)
+                    wav = pipe.generate(text, language_id=self.language_id,
+                                        audio_prompt_path=ref, exaggeration=ex,
+                                        cfg_weight=cfgw, temperature=temp)
+                    arr = wav.squeeze(0).detach().cpu().numpy()
+                else:
+                    # Turbo ONNX: ignores exaggeration, so shape emotion with temperature
+                    # + light DSP on the wav.
+                    temperature, rate, semis, gain, tremor = _EMO.get(emotion, _EMO_DEFAULT)
+                    conds = self._prepare_voice(voice)
+                    if conds is None:
+                        return None
+                    pipe.tts.conds = conds    # select this voice (reuse prepared conds)
+                    wav = pipe.generate(text, temperature=temperature)
+                    arr = wav.squeeze(0).detach().cpu().numpy()
+                    arr = self._shape(arr, int(pipe.sr), rate, semis, gain, tremor)
                 import soundfile as sf
                 tmp = path + ".tmp"
                 sf.write(tmp, arr, int(pipe.sr), format="WAV")  # .wav.tmp -> specify format
