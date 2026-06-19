@@ -122,6 +122,12 @@
   </div></div>
 
   <div id="toast"></div>
+
+  <!-- background ambience (original storm/noir loop) + its toggle -->
+  <audio id="bgm" src="/assets/music/ambience.ogg" loop preload="auto"></audio>
+  <button id="musicBtn" title="Background music" onclick="toggleMusic()"
+    style="position:absolute;left:10px;top:48px;z-index:40;background:#000c;border:1px solid var(--line);
+    color:var(--ink);border-radius:8px;padding:4px 9px;font-size:15px;cursor:pointer">🎵</button>
 </div>
 
 <script>
@@ -162,10 +168,30 @@ let _voiceEl=null, _voiceUnlocked=false;
 const _SILENT='data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAA=';
 function _getVoiceEl(){ if(!_voiceEl){ _voiceEl=new Audio(); _voiceEl.preload='auto'; } return _voiceEl; }
 function unlockAudio(){
+  startMusic();                       // first gesture also starts the ambience
   if(_voiceUnlocked) return;
   const a=_getVoiceEl();
   try{ a.src=_SILENT; const p=a.play(); if(p&&p.then) p.then(()=>{_voiceUnlocked=true;}).catch(()=>{}); else _voiceUnlocked=true; }catch(e){}
 }
+
+// ---- background music (ambience) ---------------------------------------------
+// Loops quietly under the game and ducks down while a suspect speaks. Starts on the first
+// user gesture (browsers block autoplay). Toggle with the 🎵 button.
+const BGM_VOL=0.28, BGM_DUCK=0.07;
+let _musicOn=(localStorage.getItem('musicOn')!=='0'), _duck=0;
+function _bgm(){ return document.getElementById('bgm'); }
+function updateMusicBtn(){ const b=document.getElementById('musicBtn');
+  if(b){ b.textContent=_musicOn?'🎵':'🔇'; b.style.opacity=_musicOn?'1':'0.5';
+         b.title=_musicOn?'Music on — click to mute':'Music off — click to enable'; } }
+function startMusic(){ if(!_musicOn) return; const a=_bgm(); if(!a) return;
+  a.volume=(_duck>0?BGM_DUCK:BGM_VOL); const p=a.play(); if(p&&p.then) p.catch(()=>{}); }
+function toggleMusic(){ _musicOn=!_musicOn; try{ localStorage.setItem('musicOn',_musicOn?'1':'0'); }catch(e){}
+  updateMusicBtn(); const a=_bgm(); if(!a) return;
+  if(_musicOn){ a.volume=(_duck>0?BGM_DUCK:BGM_VOL); const p=a.play(); if(p&&p.then) p.catch(()=>{}); } else { a.pause(); } }
+function _setBgmVol(v){ const a=_bgm(); if(a){ try{ a.volume=v; }catch(e){} } }
+function duckMusic(){ _duck++; if(_musicOn) _setBgmVol(BGM_DUCK); }       // a voice/video started
+function unduckMusic(){ _duck=Math.max(0,_duck-1); if(_duck===0 && _musicOn) _setBgmVol(BGM_VOL); }
+updateMusicBtn();
 // keep trying to unlock on every gesture until it sticks
 document.addEventListener('pointerdown', unlockAudio);
 document.addEventListener('keydown', unlockAudio);
@@ -196,8 +222,8 @@ function playVoice(url){
 }
 function _pumpVoice(){
   if(_voiceBusy || !_voiceQ.length) return;
-  const url=_voiceQ.shift(); _voiceBusy=true;
-  _playWhenReady(url, ()=>{ _voiceBusy=false; if(!_voiceQ.length) _voiceStatus(''); _pumpVoice(); });
+  const url=_voiceQ.shift(); _voiceBusy=true; duckMusic();   // lower ambience while a line plays
+  _playWhenReady(url, ()=>{ unduckMusic(); _voiceBusy=false; if(!_voiceQ.length) _voiceStatus(''); _pumpVoice(); });
 }
 function _playWhenReady(url, done, tries=0){
   // Wait for the WAV to exist (background synthesis; the first one may wait on a
@@ -219,8 +245,9 @@ function closeOverlay(id){ document.getElementById(id).classList.remove('show');
 function playTalk(videoUrl, audioUrl){
   if(!videoUrl){ if(audioUrl) playVoice(audioUrl); return; }
   const vid=document.getElementById('chatVideo'), face=document.getElementById('chatFace');
-  let tries=0; _voiceStatus('⏳ video…');
-  const back=()=>{ try{vid.pause();}catch(e){} vid.style.display='none'; if(face.getAttribute('src')) face.style.display=''; };
+  let tries=0, ducked=false; _voiceStatus('⏳ video…');
+  const back=()=>{ try{vid.pause();}catch(e){} vid.style.display='none'; if(face.getAttribute('src')) face.style.display='';
+    if(ducked){ unduckMusic(); ducked=false; } };
   const fallback=()=>{ back(); if(audioUrl) playVoice(audioUrl); };
   const tryPlay=()=>{
     fetch(videoUrl,{method:'HEAD',cache:'no-store'}).then(r=>{
@@ -229,7 +256,7 @@ function playTalk(videoUrl, audioUrl){
       vid.oncanplay=()=>{ face.style.display='none'; vid.style.display=''; };
       vid.onended=back; vid.onerror=fallback;
       const p=vid.play();
-      if(p&&p.then) p.then(()=>_voiceStatus('▶ playing')).catch(()=>fallback());
+      if(p&&p.then) p.then(()=>{ _voiceStatus('▶ playing'); if(!ducked){ duckMusic(); ducked=true; } }).catch(()=>fallback());
     }).catch(()=>{ if(tries++<80) setTimeout(tryPlay,500); else fallback(); });
   };
   tryPlay();

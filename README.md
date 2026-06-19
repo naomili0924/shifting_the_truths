@@ -174,6 +174,22 @@ Wav2Lip isn't in git (it lives at `/workspace/Wav2Lip`); set it up with:
 ./setup_wav2lip.sh     # clone + patch + fetch checkpoints (also run by restore_models.sh)
 ```
 
+## Background ambience
+
+A quiet **original storm/noir loop** (rain, wind, distant thunder, a low uneasy drone)
+plays under the game, matching the stormy-night setting. It's **synthesized procedurally**
+(`gen_ambience.py`, numpy) — no samples, royalty-free, safe in the repo — and crossfaded
+to loop seamlessly:
+
+```bash
+python gen_ambience.py   # -> webui/assets/music/ambience.ogg
+```
+
+In the browser it starts on the first interaction (autoplay is blocked otherwise),
+**ducks** down while a suspect speaks (and during the talking-head video) so dialogue
+stays clear, and has a **🎵 toggle** (top-left, remembered across reloads). To use your
+own music instead, drop a file you have the rights to at `webui/assets/music/ambience.ogg`.
+
 ## Language / 语言
 
 The player picks the language; English stays the default and is never
@@ -304,5 +320,6 @@ of play with no spoilers. The `logs/` directory is gitignored.
 - `ttsgen.py` — optional cached voice (chatterbox-turbo ONNX for EN, multilingual for ZH; graceful no-voice fallback)
 - `talkgen.py` — optional cached Wav2Lip lip-sync talking-head video (graceful static-portrait fallback)
 - `setup_wav2lip.sh` — one-time Wav2Lip setup (clone + patch + checkpoints) for the talking head
+- `gen_ambience.py` — synthesize the original royalty-free background ambience loop (`webui/assets/music/ambience.ogg`)
 - `webui/game.html` — the Phaser point-and-click client (inpainted scenes, object pickup/inspect, 2-scene nav, faces)
 - `webui/index.html` — the original single-page web client (served at `/classic`)
