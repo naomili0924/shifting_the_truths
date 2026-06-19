@@ -35,6 +35,21 @@ logger = logging.getLogger("shifting_truth.ttsgen")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# Emotion -> (temperature, time-stretch rate, pitch semitones, gain, tremor depth).
+# chatterbox-turbo ignores exaggeration/cfg, so the feeling is shaped by temperature
+# (passed to the model) plus light DSP on the wav: faster+higher+louder reads as
+# angry/nervous, slower+lower+softer as sad/cold; nervous adds a faint tremor. Subtle on
+# purpose — a hint of how the character feels, not a caricature.
+_EMO = {
+    "angry":     (0.90, 1.07,  1.0, 1.22, 0.00),
+    "nervous":   (0.95, 1.12,  0.8, 1.05, 0.14),
+    "defensive": (0.85, 1.05,  0.4, 1.06, 0.00),
+    "cold":      (0.70, 0.97, -1.0, 0.90, 0.00),
+    "sad":       (0.80, 0.90, -1.5, 0.85, 0.00),
+    "calm":      (0.80, 1.00,  0.0, 1.00, 0.00),
+}
+_EMO_DEFAULT = (0.8, 1.0, 0.0, 1.0, 0.0)
+
 # chatterbox's s3tokenizer ships float64 mel filters (from librosa) that clash
 # with float32 STFT magnitudes during voice-cloning. Patch the class once, at
 # import time, entirely from here (no edit to the chatterbox package).
@@ -160,32 +175,58 @@ class TTSGen:
             return None
 
     # ---- cache -------------------------------------------------------
-    def _cache_name(self, text: str, voice: str) -> str:
-        h = hashlib.sha1(f"{voice}|{text}".encode("utf-8")).hexdigest()[:20]
+    def _cache_name(self, text: str, voice: str, emotion: str | None = None) -> str:
+        # Emotion shapes the audio, so it is part of the cache key — the same line said
+        # nervously vs angrily caches apart.
+        h = hashlib.sha1(f"{voice}|{emotion or ''}|{text}".encode("utf-8")).hexdigest()[:20]
         return f"{h}.wav"
 
-    def cached(self, text: str, voice: str) -> str | None:
-        name = self._cache_name(text, voice)
+    def cached(self, text: str, voice: str, emotion: str | None = None) -> str | None:
+        name = self._cache_name(text, voice, emotion)
         return name if os.path.isfile(os.path.join(self.cache_dir, name)) else None
 
-    def url_name(self, text: str, voice: str) -> str:
-        """Deterministic servable filename for (text, voice) — known before the
+    def url_name(self, text: str, voice: str, emotion: str | None = None) -> str:
+        """Deterministic servable filename for (text, voice, emotion) — known before the
         WAV exists, so the caller can hand the browser a URL to poll."""
-        return self._cache_name(text, voice)
+        return self._cache_name(text, voice, emotion)
 
     # ---- generation --------------------------------------------------
-    def generate(self, text: str, voice: str) -> str | None:
+    def _shape(self, y, sr, rate, semis, gain, tremor):
+        """Light DSP to colour the delivery with emotion (see _EMO). Fail-soft: on any
+        error the unshaped audio is returned."""
+        try:
+            import numpy as np, librosa
+            y = np.asarray(y, dtype="float32")
+            if abs(rate - 1.0) > 1e-3:
+                y = librosa.effects.time_stretch(y, rate=float(rate))
+            if abs(semis) > 1e-3:
+                y = librosa.effects.pitch_shift(y, sr=sr, n_steps=float(semis))
+            if tremor > 0 and len(y):
+                t = np.arange(len(y)) / sr
+                y = y * (1.0 - tremor * (0.5 + 0.5 * np.sin(2 * np.pi * 6.5 * t)))
+            if abs(gain - 1.0) > 1e-3:
+                y = y * float(gain)
+            m = float(np.max(np.abs(y))) if len(y) else 0.0
+            if m > 0.99:
+                y = y * (0.99 / m)               # avoid clipping after gain/shift
+            return y.astype("float32")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("emotion DSP skipped: %s", exc)
+            return y
+
+    def generate(self, text: str, voice: str, emotion: str | None = None) -> str | None:
         """Synthesize *text* in *voice* and return a servable WAV filename.
 
-        Returns the cached filename instantly if present; otherwise generates,
-        caches, and returns it. Returns ``None`` on any failure — the caller must
-        treat a missing clip as "no voice for this line".
+        *emotion* (nervous/angry/...) colours the delivery so the feeling lands in the
+        sound. Returns the cached filename instantly if present; otherwise generates,
+        caches, and returns it. Returns ``None`` on any failure — the caller must treat a
+        missing clip as "no voice for this line".
         """
         text = (text or "").strip()
         if not text or not self._can_attempt():
             return None
 
-        name = self._cache_name(text, voice)
+        name = self._cache_name(text, voice, emotion)
         path = os.path.join(self.cache_dir, name)
         if os.path.isfile(path):
             return name
@@ -194,6 +235,7 @@ class TTSGen:
         if pipe is None:
             return None
 
+        temperature, rate, semis, gain, tremor = _EMO.get(emotion, _EMO_DEFAULT)
         with self._lock:
             if os.path.isfile(path):          # another thread may have just made it
                 return name
@@ -202,11 +244,12 @@ class TTSGen:
                 if conds is None:
                     return None
                 pipe.tts.conds = conds        # select this voice (reuse prepared conds)
-                wav = pipe.generate(text)      # (1, N) torch tensor at pipe.sr
+                wav = pipe.generate(text, temperature=temperature)   # (1, N) torch @ pipe.sr
+                arr = wav.squeeze(0).detach().cpu().numpy()
+                arr = self._shape(arr, int(pipe.sr), rate, semis, gain, tremor)
                 import soundfile as sf
                 tmp = path + ".tmp"
-                sf.write(tmp, wav.squeeze(0).detach().cpu().numpy(), int(pipe.sr),
-                         format="WAV")          # ext is .wav.tmp -> specify format
+                sf.write(tmp, arr, int(pipe.sr), format="WAV")  # .wav.tmp -> specify format
                 os.replace(tmp, path)          # atomic publish
                 return name
             except Exception as exc:  # noqa: BLE001

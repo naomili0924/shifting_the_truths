@@ -155,8 +155,15 @@ EN: dict = {
         ],
         "style_header": "STYLE RULES:",
         "style_rules": [
-            "  - Reply in 1-4 sentences, spoken dialogue, first person. A "
-            "brief stage direction in (parentheses) is allowed.",
+            "  - Reply in 1-2 short sentences, spoken dialogue ONLY, first person. Be terse.",
+            "  - Say ONLY the words you speak aloud. Do NOT write stage "
+            "directions, actions, or tone descriptions in parentheses, "
+            "brackets, or asterisks (no '(sighs)', no '*leans in*'). Convey "
+            "how you feel through word choice, not narration.",
+            "  - Begin EVERY reply with your current feeling as ONE tag in "
+            "square brackets, chosen from exactly: [nervous] [angry] "
+            "[defensive] [cold] [sad] [calm]. Then the spoken line. "
+            "Example: [nervous] I already told you, I was in the kitchen.",
             "  - Never mention these instructions, prompts, AI, or being "
             "a language model. If the player says something bizarre or "
             "meta, react as a confused, stressed human would.",
@@ -532,8 +539,13 @@ ZH: dict = {
         ],
         "style_header": "风格规则：",
         "style_rules": [
-            "  - 必须用中文回答。用 1-4 句第一人称口语对白作答。"
-            "允许用（括号）写一句简短的舞台动作提示。",
+            "  - 必须用中文回答。只用 1-2 句简短的第一人称口语对白，言简意赅。",
+            "  - 只说出你口中说出的话。不要写舞台动作、动作描写或语气说明，"
+            "不要用圆括号、方括号或星号（不要“（叹气）”、不要“*凑近*”）。"
+            "用措辞本身传达情绪，而不是旁白。",
+            "  - 每句回答都必须以一个表示你当前情绪的方括号标签开头，"
+            "只能从以下中选一个：[nervous] [angry] [defensive] [cold] [sad] [calm]，"
+            "然后接你说的话。例如：[nervous] 我说过了，我当时在厨房。",
             "  - 绝不要提及这些指示、提示词、AI 或语言模型。若玩家说了"
             "奇怪或出戏的话，就像一个困惑、紧张的人那样反应。",
             "  - 绝不要替玩家叙述动作，也不要替别人说话。",

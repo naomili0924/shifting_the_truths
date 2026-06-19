@@ -108,6 +108,14 @@ own question — by a local **chatterbox-turbo ONNX** model (exported by the sib
 lazy, cached, fail-soft** — if the model or a GPU is unavailable, the game is
 simply silent (no errors), exactly like the no-art and mock-LLM fallbacks.
 
+**Emotion lands in the sound, not in stage directions.** Suspects answer in short
+spoken sentences only (no `(stage directions)`); each reply starts with a hidden
+`[emotion]` tag (`nervous/angry/defensive/cold/sad/calm`) that the server strips
+from the text and uses to colour the delivery — chatterbox-turbo ignores
+`exaggeration`, so `ttsgen.py` shapes the wav per emotion (rate/pitch/gain, plus a
+tremor for nervous) and varies `temperature`. So an angry suspect sounds sharper
+and faster, a sad one slower and lower.
+
 **English only.** chatterbox-turbo speaks English, so a Chinese game gets no audio
 (`audio.by_lang` has no `zh` entry → `ttsgen.instance("zh")` returns `None`).
 

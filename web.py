@@ -57,6 +57,35 @@ def _safe_provider(cfg_block):
         return MockProvider(), True
 
 
+# The NPC begins each reply with an emotion tag ([nervous]/[angry]/...); we strip it from
+# the text and colour the VOICE instead, so the feeling lands in the sound, not in
+# unspeakable stage directions. chatterbox-turbo ignores exaggeration/cfg, so the actual
+# shaping (rate/pitch/gain/tremor + temperature) lives in ttsgen by emotion name.
+_EMOTIONS = {"nervous", "angry", "defensive", "cold", "sad", "calm"}
+
+
+def _split_emotion(text):
+    """Pull a leading [emotion] tag off an NPC reply. Returns (emotion|None, rest)."""
+    import re as _re
+    m = _re.match(r"\s*[\[\(（【]\s*(nervous|angry|defensive|cold|sad|calm)\s*"
+                  r"[\]\)）】]\s*", text or "", _re.I)
+    if m:
+        return m.group(1).lower(), (text or "")[m.end():]
+    return None, (text or "")
+
+
+def _clean_reply(text):
+    """Drop any leftover stage directions so the chat shows (and voices) only spoken
+    words: (parentheticals), *actions*, and stray [bracketed] notes."""
+    import re as _re
+    t = text or ""
+    t = _re.sub(r"[\(（][^)）]*[\)）]", " ", t)   # (stage directions)
+    t = _re.sub(r"\*[^*]+\*", " ", t)                          # *actions*
+    t = _re.sub(r"[\[【][^\]】]*[\]】]", " ", t)   # [leftover tags]
+    t = _re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 _VOICE_MAX = 130
 
 
@@ -180,18 +209,21 @@ class WebGame:
         vs.update(self.voices_assign.get(n) for n in self.names)
         return [v for v in vs if v]
 
-    def _enqueue_tts(self, text, voice):
-        """Servable URL for (text, voice); start background synthesis if not yet
-        cached. Returns the URL immediately (browser polls until it appears), or
-        None if voice is off / unavailable."""
+    def _enqueue_tts(self, text, voice, emotion=None):
+        """Servable URL for (text, voice, emotion); start background synthesis if not yet
+        cached. The emotion picks chatterbox params so the feeling lands in the sound.
+        Returns the URL immediately (browser polls until it appears), or None if voice is
+        off / unavailable."""
         if not self.audio_enabled or not (text or "").strip():
             return None
         g = ttsgen.instance(self.lang)
         if g is None:
             return None
-        name = g.url_name(text, voice)
-        if not g.cached(text, voice):
-            threading.Thread(target=g.generate, args=(text, voice), daemon=True).start()
+        emo = emotion if emotion in _EMOTIONS else None
+        name = g.url_name(text, voice, emotion=emo)
+        if not g.cached(text, voice, emotion=emo):
+            threading.Thread(target=g.generate, args=(text, voice),
+                             kwargs={"emotion": emo}, daemon=True).start()
         return f"/assets/cache/audio/{name}"
 
     # ---- background setup (judge work) then painting ----------------
@@ -217,8 +249,14 @@ class WebGame:
         }
         self.ready = True
 
-        # 2) Paint Act 1's scenes behind the intro; faces once; then prefetch later acts
-        #    in the background (SDXL inpaint is slow, so we don't paint all acts up front).
+        # 2) Deeds + NPC system prompts (what the TALK phase needs) are a judge API call
+        #    with no GPU use, so run them in their OWN thread — NOT gated behind the slow
+        #    GPU painting + voice-warm below. Otherwise talk stays "still gathering" for
+        #    ~30-45s after the art is ready and the player's first question vanishes.
+        threading.Thread(target=self._setup_npcs, daemon=True).start()
+
+        # 3) Paint Act 1's scenes behind the intro; faces once; then prefetch later acts
+        #    in the background (SDXL is slow, so we don't paint all acts up front).
         first = self.case["acts"][0]["act"]
         if self.art_enabled:
             self._paint_faces()
@@ -228,8 +266,9 @@ class WebGame:
         self._warm_audio()
         threading.Thread(target=self._paint_rest, args=(first,), daemon=True).start()
 
-        # 3) Deeds + NPC system prompts are only needed in the talk phase (after
-        #    the timed search phase), so generate them after the game is playable.
+    def _setup_npcs(self):
+        """Judge-written deeds + each NPC's system prompt (talk-phase readiness). Runs in
+        its own thread, concurrent with painting, so suspects are ready to answer fast."""
         try:
             self.deeds = judge_generate_deeds(
                 self.case, self.gt, self.judge_llm, self.director.rng, self.lang)
@@ -446,13 +485,15 @@ class WebGame:
         self.chat[name].append({"who": "you", "text": text})
         # Voice the player's question now, so it plays while the reply generates.
         ask_audio = self._enqueue_tts(_voice_text(text), self.player_voice)
-        reply = self._npc_reply(name, text)
-        self.chat[name].append({"who": "npc", "text": reply})
+        reply_raw = self._npc_reply(name, text)
+        # Strip the leading [emotion] tag + any stage directions; the feeling goes into the
+        # voice, the chat shows only spoken words.
+        emotion, spoken = _split_emotion(reply_raw)
+        spoken = _clean_reply(spoken) or _clean_reply(reply_raw) or reply_raw
+        self.chat[name].append({"who": "npc", "text": spoken})
         voice = ttsgen.voice_for(name, self.voices_assign, self.default_voice)
-        # Voice only a short spoken "taste" of the reply (the full text is shown):
-        # chatterbox is autoregressive, so a long line takes 15-20s to synthesize.
-        reply_audio = self._enqueue_tts(_voice_text(reply), voice)
-        return {"ok": True, "reply": reply,
+        reply_audio = self._enqueue_tts(_voice_text(spoken), voice, emotion=emotion)
+        return {"ok": True, "reply": spoken, "emotion": emotion,
                 "ask_audio": ask_audio, "reply_audio": reply_audio}
 
     def show(self, name, item_name):
@@ -473,9 +514,13 @@ class WebGame:
         msg = self.L["ui"]["evidence_present"].format(
             name=item["name"], text=item["found_text"])
         self.chat[name].append({"who": "you", "text": "▸ " + item["name"]})
-        reply = self._npc_reply(name, msg)
-        self.chat[name].append({"who": "npc", "text": reply})
-        return {"ok": True, "reply": reply}
+        reply_raw = self._npc_reply(name, msg)
+        emotion, spoken = _split_emotion(reply_raw)
+        spoken = _clean_reply(spoken) or _clean_reply(reply_raw) or reply_raw
+        self.chat[name].append({"who": "npc", "text": spoken})
+        voice = ttsgen.voice_for(name, self.voices_assign, self.default_voice)
+        reply_audio = self._enqueue_tts(_voice_text(spoken), voice, emotion=emotion)
+        return {"ok": True, "reply": spoken, "emotion": emotion, "reply_audio": reply_audio}
 
     def hint(self):
         """Last-resort help when time is short and the player is short of two clues:

@@ -630,23 +630,37 @@ async function sendChat(){
   unlockAudio();
   // Voice the question right away — it plays while the reply is generated.
   api('/say',{text}).then(s=>{ if(s) playVoice(s.audio); }).catch(()=>{});
+  let transient=null;
   try{
     const r=await api('/talk',{name:chatName,text});
     if(r && r.cast){ G.state=r; }
     if(r && r.action && r.action.error){ toast('Cannot ask now'); }
+    // A reply that came back but was NOT recorded in the chat log (e.g. the suspects
+    // are still gathering) — keep it on screen instead of letting renderChat wipe it.
+    const c0=(G.state.cast||[]).find(x=>x.name===chatName);
+    const logged=(c0&&c0.chat||[]).some(m=>m.who==='npc');
+    if(r && r.action && r.action.reply && !logged){ transient=r.action.reply; }
     if(r && r.action && r.action.reply_audio){ _lastVoiceUrl=r.action.reply_audio; playVoice(r.action.reply_audio); }   // suspect's reply voice
   } catch(e){ toast('That didn’t go through — try again.'); }
   finally{
     chatBusy(false);
     const c=(G.state.cast||[]).find(x=>x.name===chatName); renderChat(c);
+    if(transient){
+      // show the player's line + the transient reply so nothing vanishes
+      const log=document.getElementById('chatLog');
+      log.insertAdjacentHTML('beforeend', bubbleHTML('you', escapeHtml(text)));
+      log.insertAdjacentHTML('beforeend', bubbleHTML('npc', escapeHtml(transient)));
+      log.scrollTop=log.scrollHeight;
+    }
     document.getElementById('chatInput').focus();
   }
 }
 async function showEv(item){
-  showThinking('▸ '+item); chatBusy(true);
+  showThinking('▸ '+item); chatBusy(true); unlockAudio();
   try{
     const r=await api('/show',{name:chatName,item});
     if(r && r.cast){ G.state=r; }
+    if(r && r.action && r.action.reply_audio){ _lastVoiceUrl=r.action.reply_audio; playVoice(r.action.reply_audio); }
   } catch(e){ toast('That didn’t go through — try again.'); }
   finally{
     chatBusy(false);
