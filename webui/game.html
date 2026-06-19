@@ -67,6 +67,12 @@
       </div>
     </div>
     <div class="muted" id="chatRole"></div>
+    <!-- talking head: static photoreal portrait, swapped for a lip-synced video while the
+         suspect speaks, then back to the portrait -->
+    <div id="chatMedia" style="text-align:center;margin:8px 0">
+      <img id="chatFace" alt="" style="height:200px;border-radius:12px;border:1px solid #2a241c;object-fit:cover;display:none"/>
+      <video id="chatVideo" playsinline style="height:200px;border-radius:12px;border:1px solid #2a241c;display:none"></video>
+    </div>
     <div class="chatlog" id="chatLog"></div>
     <div id="chatEv" class="muted" style="margin-bottom:6px"></div>
     <div class="row">
@@ -204,6 +210,27 @@ function _playWhenReady(url, done, tries=0){
 }
 let _overlayClosedAt = 0;
 function closeOverlay(id){ document.getElementById(id).classList.remove('show'); _overlayClosedAt = performance.now(); }
+// Play the suspect's lip-sync talking-head video (its audio IS the reply voice). Polls
+// until the MP4 lands (generated in the background), swaps the portrait for the video,
+// and falls back to audio-only if the video never arrives or can't autoplay.
+function playTalk(videoUrl, audioUrl){
+  if(!videoUrl){ if(audioUrl) playVoice(audioUrl); return; }
+  const vid=document.getElementById('chatVideo'), face=document.getElementById('chatFace');
+  let tries=0; _voiceStatus('⏳ video…');
+  const back=()=>{ try{vid.pause();}catch(e){} vid.style.display='none'; if(face.getAttribute('src')) face.style.display=''; };
+  const fallback=()=>{ back(); if(audioUrl) playVoice(audioUrl); };
+  const tryPlay=()=>{
+    fetch(videoUrl,{method:'HEAD',cache:'no-store'}).then(r=>{
+      if(!r.ok){ if(tries++<80) setTimeout(tryPlay,500); else fallback(); return; }
+      vid.muted=!_soundOn; vid.src=videoUrl;
+      vid.oncanplay=()=>{ face.style.display='none'; vid.style.display=''; };
+      vid.onended=back; vid.onerror=fallback;
+      const p=vid.play();
+      if(p&&p.then) p.then(()=>_voiceStatus('▶ playing')).catch(()=>fallback());
+    }).catch(()=>{ if(tries++<80) setTimeout(tryPlay,500); else fallback(); });
+  };
+  tryPlay();
+}
 function showOverlay(id){ document.getElementById(id).classList.add('show'); }
 // True while a popup is open, or for a moment after one closes — used to swallow the
 // click that dismissed the popup so it doesn't "fall through" to the Phaser hotspot/button
@@ -485,25 +512,30 @@ class PlayScene extends Phaser.Scene {
     const n=(G.state.cast||[]).length, gap=W/(n+1), x=gap*(i+1), y=TOP_H+70;
     const enabled=(kind==='talk');
     const img=G.state.images||{}, url=(img.faces||{})[c.name];
+    // Size each face to the available spacing so click areas NEVER overlap — otherwise on
+    // a narrow window clicking one suspect lands on the adjacent (next) one.
+    const cw=Math.max(56, Math.min(110, Math.round(gap-18)));   // hit-box width < gap
+    const fs=Math.min(84, cw-8);                                 // face image size
     const items=[];
     if(url && this.textures.exists(this.texKey(url))){
-      const f=this.add.image(0,0,this.texKey(url)); const s=84/Math.max(f.width,f.height);
-      f.setScale(s); items.push(f);
+      const f=this.add.image(0,0,this.texKey(url)); f.setScale(fs/Math.max(f.width,f.height));
+      items.push(f);
     } else {
-      items.push(this.add.rectangle(0,0,84,84, Phaser.Display.Color.HexStringToColor(c.avatar.color).color));
-      items.push(this.add.text(0,0,c.avatar.initial,{fontSize:'30px',color:'#fff'}).setOrigin(.5));
+      items.push(this.add.rectangle(0,0,fs,fs, Phaser.Display.Color.HexStringToColor(c.avatar.color).color));
+      items.push(this.add.text(0,0,c.avatar.initial,{fontSize:Math.round(fs*0.36)+'px',color:'#fff'}).setOrigin(.5));
     }
-    const nm=this.add.text(0,58,c.name,{fontSize:'13px',color: enabled?'#e8e2d6':'#8a8174'}).setOrigin(.5);
-    const role=this.add.text(0,74,c.role,{fontSize:'10px',color:'#6f675b',
-      wordWrap:{width:150}, align:'center'}).setOrigin(.5,0);
+    const nm=this.add.text(0,fs/2+6,c.name,{fontSize:'12px',color: enabled?'#e8e2d6':'#8a8174',
+      wordWrap:{width:cw+28}, align:'center'}).setOrigin(.5,0);
+    const role=this.add.text(0,fs/2+22,c.role,{fontSize:'10px',color:'#6f675b',
+      wordWrap:{width:cw+28}, align:'center'}).setOrigin(.5,0);
     items.push(nm,role);
-    const g=this.add.container(x,y,items); g.setSize(110,120);
+    const g=this.add.container(x,y,items); g.setSize(cw,120);
     g.setAlpha(enabled?1:0.55);
     if(enabled){
       g.setInteractive({useHandCursor:true})
        .on('pointerover',()=>g.setScale(1.05))
        .on('pointerout', ()=>g.setScale(1))
-       .on('pointerdown',()=>openChat(c.name));
+       .on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) openChat(c.name); });
     }
     return g;
   }
@@ -611,6 +643,11 @@ function openChat(name){
   updateSoundBtn();
   document.getElementById('chatName').textContent=name;
   document.getElementById('chatRole').textContent=c.role;
+  // show the static portrait; the lip-sync video swaps in when they reply
+  const url=((G.state.images||{}).faces||{})[name];
+  const face=document.getElementById('chatFace'), vid=document.getElementById('chatVideo');
+  try{ vid.pause(); }catch(e){} vid.style.display='none';
+  if(url){ face.src=url; face.style.display=''; } else { face.removeAttribute('src'); face.style.display='none'; }
   renderChat(c);
   // evidence to present
   const ev=G.state.evidence||[];
@@ -658,7 +695,11 @@ async function sendChat(){
     const c0=(G.state.cast||[]).find(x=>x.name===chatName);
     const logged=(c0&&c0.chat||[]).some(m=>m.who==='npc');
     if(r && r.action && r.action.reply && !logged){ transient=r.action.reply; }
-    if(r && r.action && r.action.reply_audio){ _lastVoiceUrl=r.action.reply_audio; playVoice(r.action.reply_audio); }   // suspect's reply voice
+    if(r && r.action){
+      _lastVoiceUrl=r.action.reply_audio||null;
+      if(r.action.reply_video){ playTalk(r.action.reply_video, r.action.reply_audio); }   // talking head (carries the voice)
+      else if(r.action.reply_audio){ playVoice(r.action.reply_audio); }                    // audio-only fallback
+    }
   } catch(e){ toast('That didn’t go through — try again.'); }
   finally{
     chatBusy(false);
@@ -678,7 +719,11 @@ async function showEv(item){
   try{
     const r=await api('/show',{name:chatName,item});
     if(r && r.cast){ G.state=r; }
-    if(r && r.action && r.action.reply_audio){ _lastVoiceUrl=r.action.reply_audio; playVoice(r.action.reply_audio); }
+    if(r && r.action){
+      _lastVoiceUrl=r.action.reply_audio||null;
+      if(r.action.reply_video){ playTalk(r.action.reply_video, r.action.reply_audio); }
+      else if(r.action.reply_audio){ playVoice(r.action.reply_audio); }
+    }
   } catch(e){ toast('That didn’t go through — try again.'); }
   finally{
     chatBusy(false);

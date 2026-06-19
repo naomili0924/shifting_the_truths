@@ -123,3 +123,16 @@ audio:
       backend: multilingual              # full chatterbox model, downloads on first use
       language_id: zh
       voices: *tts_voices
+
+# Optional lip-sync talking head (web.py). After the suspect's reply is voiced, Wav2Lip
+# animates their photoreal portrait's mouth to the speech -> a talking character, not a
+# static card. Same fail-soft rule: if Wav2Lip/checkpoints are missing, the UI just shows
+# the static portrait. Language-independent (needs only a face + the reply wav).
+video:
+  enabled: true
+  wav2lip_dir: /workspace/Wav2Lip
+  checkpoint: /workspace/Wav2Lip/checkpoints/wav2lip_gan.pth
+  device: cuda
+  out_height: 512          # downscale the portrait for fast generation (<1s warm)
+  preset: veryfast         # x264 speed/quality
+  cache_dir: webui/assets/cache/video   # served at /assets/cache/video/<name>

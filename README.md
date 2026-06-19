@@ -152,6 +152,28 @@ The voice ONNX (~1 GB, English) restores to `/workspace/models/chatterbox-turbo-
 (config `audio.by_lang.en.model_dir`). `ttsgen.py` is the cached, fail-soft painter
 for audio — the exact mirror of `imagegen.py`.
 
+## Talking head (lip-sync video)
+
+In the talk phase each suspect is a **photorealistic person whose mouth moves in sync
+with their spoken reply** — not a static card. After a reply is voiced, `talkgen.py`
+runs **Wav2Lip** on that suspect's portrait + the reply WAV to produce a short lip-synced
+MP4 that plays in the chat panel (its audio is the voice). Same fail-soft rule: no
+Wav2Lip / GPU → the UI just shows the static portrait.
+
+- **Photoreal, gender-matched portraits.** The five faces are generated photoreal (not
+  painted) and gendered from the voice assignment, so the talking head looks real and
+  matches the voice (`rooms.portrait_prompt` + `images` model, `style=""`).
+- **Fast.** The model + face detector are warmed behind the intro (paying the one-time
+  CUDA/cuDNN init), so each reply's video is well under a second; `cudnn.benchmark` is
+  pinned off (Wav2Lip's face detector turns it on, which otherwise re-autotunes ~11s per
+  reply). Config in `config.yaml`'s `video:` block; cache in `webui/assets/cache/video`.
+
+Wav2Lip isn't in git (it lives at `/workspace/Wav2Lip`); set it up with:
+
+```bash
+./setup_wav2lip.sh     # clone + patch + fetch checkpoints (also run by restore_models.sh)
+```
+
 ## Language / 语言
 
 The player picks the language; English stays the default and is never
@@ -279,6 +301,8 @@ of play with no spoilers. The `logs/` directory is gitignored.
 - `rooms.py` — scene manifest: 2 sub-scenes per act, each with embedded collectible + decoy objects (English image prompts, localized display)
 - `imagegen.py` — optional cached SDXL painter (txt2img base + `from_pipe` inpaint to embed objects + crop evidence thumbnails; graceful no-art fallback)
 - `export_inpaint.py` — one-time fetch of the SDXL scene model to `/dev/shm/sdxl-base`
-- `ttsgen.py` — optional cached chatterbox-turbo ONNX voice for conversation lines (graceful no-voice fallback)
+- `ttsgen.py` — optional cached voice (chatterbox-turbo ONNX for EN, multilingual for ZH; graceful no-voice fallback)
+- `talkgen.py` — optional cached Wav2Lip lip-sync talking-head video (graceful static-portrait fallback)
+- `setup_wav2lip.sh` — one-time Wav2Lip setup (clone + patch + checkpoints) for the talking head
 - `webui/game.html` — the Phaser point-and-click client (inpainted scenes, object pickup/inspect, 2-scene nav, faces)
 - `webui/index.html` — the original single-page web client (served at `/classic`)

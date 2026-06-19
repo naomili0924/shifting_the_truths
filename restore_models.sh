@@ -27,6 +27,9 @@ TTS_DIR="${TTS_DIR:-/workspace/models/chatterbox-turbo-onnx}"
 echo "Fetching SDXL scene model -> /dev/shm/sdxl-base"
 "$PY" "${HERE}/export_inpaint.py"
 
+echo "Setting up Wav2Lip (lip-sync talking head)"
+bash "${HERE}/setup_wav2lip.sh" || echo "  (Wav2Lip setup failed — talking head will fall back to static portraits)"
+
 # Voice (text-to-speech) for conversation lines. English only (~1 GB). Skip with SKIP_TTS=1.
 if [ "${SKIP_TTS:-0}" != "1" ]; then
   echo "Restoring chatterbox-turbo (voice) -> ${TTS_DIR}"

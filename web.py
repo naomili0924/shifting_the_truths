@@ -30,6 +30,7 @@ from flask import Flask, request, jsonify, send_from_directory
 
 import imagegen
 import ttsgen
+import talkgen
 import rooms
 from providers import provider_from_config, MockProvider
 from i18n import t, normalize_lang
@@ -188,6 +189,10 @@ class WebGame:
         self.default_voice = audcfg.get("default_voice", self.player_voice)
         tgen = ttsgen.instance(self.lang)
         self.audio_enabled = bool(tgen and tgen.available())
+        # Lip-sync talking head needs a face (art) + the reply wav (audio) + Wav2Lip.
+        vgen = talkgen.instance()
+        self.video_enabled = bool(vgen and vgen.available()
+                                  and self.art_enabled and self.audio_enabled)
 
         # Everything heavy runs off the request path, behind the intro. The image and
         # voice models load SEQUENTIALLY inside _setup — loading both torch models at the
@@ -226,6 +231,40 @@ class WebGame:
                              kwargs={"emotion": emo}, daemon=True).start()
         return f"/assets/cache/audio/{name}"
 
+    def _enqueue_talk(self, text, voice, emotion, name):
+        """Servable URL for the lip-sync talking-head video of *name* speaking *text* in
+        *emotion*. Spawns background gen (reply wav -> Wav2Lip video). Returns the URL
+        immediately (browser polls until it lands), or None if video is off/unavailable."""
+        if not self.video_enabled or not (text or "").strip():
+            return None
+        tv = talkgen.instance()
+        tg = ttsgen.instance(self.lang)
+        gen = imagegen.instance(self.lang)
+        if tv is None or tg is None or gen is None:
+            return None
+        with self._img_lock:
+            portrait_fn = self.faces.get(name)
+        if not portrait_fn:
+            return None
+        emo = emotion if emotion in _EMOTIONS else None
+        portrait_path = os.path.join(gen.cache_dir, portrait_fn)
+        wav_path = os.path.join(tg.cache_dir, tg.url_name(text, voice, emotion=emo))
+        vid_name = tv.url_name(portrait_path, wav_path)
+        if not tv.cached(portrait_path, wav_path):
+            threading.Thread(target=self._make_talk,
+                             args=(text, voice, emo, portrait_path, wav_path),
+                             daemon=True).start()
+        return f"/assets/cache/video/{vid_name}"
+
+    def _make_talk(self, text, voice, emotion, portrait_path, wav_path):
+        """Ensure the reply wav exists, then lip-sync it onto the portrait (background)."""
+        tg = ttsgen.instance(self.lang)
+        if tg and not os.path.isfile(wav_path):
+            tg.generate(text, voice, emotion=emotion)
+        tv = talkgen.instance()
+        if tv and os.path.isfile(wav_path):
+            tv.generate(portrait_path, wav_path)
+
     # ---- background setup (judge work) then painting ----------------
     def _setup(self):
         """Roll the plot, write deeds + prompts + room manifests, then paint.
@@ -262,8 +301,15 @@ class WebGame:
             self._paint_faces()
         self._paint_act(first)
         # Warm the voice model only AFTER the image model has loaded — loading both torch
-        # models concurrently races on CUDA. Now the next acts can paint in the background.
+        # models concurrently races on CUDA. Then warm the lip-sync model (also sequential).
         self._warm_audio()
+        if self.video_enabled:
+            vg = talkgen.instance()
+            if vg:
+                try:
+                    vg.warm()
+                except Exception:  # noqa: BLE001
+                    pass
         threading.Thread(target=self._paint_rest, args=(first,), daemon=True).start()
 
     def _setup_npcs(self):
@@ -288,10 +334,17 @@ class WebGame:
         gen = imagegen.instance(self.lang)
         if not gen:
             return
-        chars = self.case.get("characters", [])
+        # Build the portrait prompt from the ENGLISH character descriptions (SDXL is
+        # English-prompted), with a photo style/negative so faces are photoreal.
+        chars = self.en_case.get("characters", [])
         for i, name in enumerate(self.names):
             src = chars[i] if i < len(chars) else None
-            fn = gen.generate(rooms.portrait_prompt(src)) if src else None
+            # Match the face gender to the (gender-matched) voice — the case has no gender
+            # field, so derive it from the voice id (male_* / female_*).
+            vid = str(ttsgen.voice_for(name, self.voices_assign, self.default_voice))
+            gender = "man" if vid.startswith("male") else "woman"
+            fn = (gen.generate(rooms.portrait_prompt(src, gender=gender),
+                               negative=rooms.PHOTO_NEG, style="") if src else None)
             with self._img_lock:
                 self.faces[name] = fn
 
@@ -349,6 +402,7 @@ class WebGame:
             })
         return {
             "art_enabled": self.art_enabled,
+            "video_enabled": self.video_enabled,
             "images_done": done,
             "backdrop": scenes[0]["backdrop"] if scenes else None,   # intro waits on this
             "faces": {n: (f"/assets/cache/{fn}" if fn else None)
@@ -492,9 +546,11 @@ class WebGame:
         spoken = _clean_reply(spoken) or _clean_reply(reply_raw) or reply_raw
         self.chat[name].append({"who": "npc", "text": spoken})
         voice = ttsgen.voice_for(name, self.voices_assign, self.default_voice)
-        reply_audio = self._enqueue_tts(_voice_text(spoken), voice, emotion=emotion)
+        vt = _voice_text(spoken)
+        reply_audio = self._enqueue_tts(vt, voice, emotion=emotion)
+        reply_video = self._enqueue_talk(vt, voice, emotion, name)   # lip-sync talking head
         return {"ok": True, "reply": spoken, "emotion": emotion,
-                "ask_audio": ask_audio, "reply_audio": reply_audio}
+                "ask_audio": ask_audio, "reply_audio": reply_audio, "reply_video": reply_video}
 
     def show(self, name, item_name):
         if not self.ready:
@@ -519,8 +575,11 @@ class WebGame:
         spoken = _clean_reply(spoken) or _clean_reply(reply_raw) or reply_raw
         self.chat[name].append({"who": "npc", "text": spoken})
         voice = ttsgen.voice_for(name, self.voices_assign, self.default_voice)
-        reply_audio = self._enqueue_tts(_voice_text(spoken), voice, emotion=emotion)
-        return {"ok": True, "reply": spoken, "emotion": emotion, "reply_audio": reply_audio}
+        vt = _voice_text(spoken)
+        reply_audio = self._enqueue_tts(vt, voice, emotion=emotion)
+        reply_video = self._enqueue_talk(vt, voice, emotion, name)   # lip-sync talking head
+        return {"ok": True, "reply": spoken, "emotion": emotion,
+                "reply_audio": reply_audio, "reply_video": reply_video}
 
     def hint(self):
         """Last-resort help when time is short and the player is short of two clues:
@@ -708,6 +767,15 @@ try:
 except Exception:
     ttsgen.configure({"enabled": False})
 
+# Configure the (optional) lip-sync talking-head generator (Wav2Lip).
+try:
+    _vidcfg = dict(_CFG.get("video") or {})
+    if _vidcfg.get("cache_dir") and not os.path.isabs(_vidcfg["cache_dir"]):
+        _vidcfg["cache_dir"] = os.path.join(HERE, _vidcfg["cache_dir"])
+    talkgen.configure(_vidcfg)
+except Exception:
+    talkgen.configure({"enabled": False})
+
 
 def _game():
     sid = request.headers.get("X-Session")
@@ -732,7 +800,7 @@ def _evict_idle():
         for s, _ in sorted(GAMES.items(), key=lambda kv: getattr(kv[1], "last_seen", 0))[:len(GAMES) - SESSION_MAX]:
             GAMES.pop(s, None)
     if not GAMES:
-        for _mod in (imagegen, ttsgen):
+        for _mod in (imagegen, ttsgen, talkgen):
             try: _mod.dispose()
             except Exception: pass
 

@@ -150,11 +150,11 @@ class ImageGen:
         return self._pipe
 
     # ---- low-level generation (caller holds self._lock) --------------
-    def _gen_txt(self, prompt, steps=None, guidance=None):
+    def _gen_txt(self, prompt, steps=None, guidance=None, negative=None):
         """Generate a full image from *prompt* via the txt2img pipeline (base scenes/faces)."""
         out = self._txt(
             prompt=prompt,
-            negative_prompt=self.negative,
+            negative_prompt=(self.negative if negative is None else negative),
             num_inference_steps=int(steps or self.steps),
             guidance_scale=float(guidance if guidance is not None else self.guidance),
             width=self.width,
@@ -198,12 +198,16 @@ class ImageGen:
         return hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
 
     # ---- public: single image (faces / portraits) -------------------
-    def generate(self, prompt: str, negative: str | None = None) -> str | None:
-        """Paint *prompt* as a full image (style appended) and return a servable PNG
-        filename, or None on any failure. Used for the fixed suspect faces."""
+    def generate(self, prompt: str, negative: str | None = None,
+                 style: str | None = None) -> str | None:
+        """Paint *prompt* as a full image and return a servable PNG filename, or None on
+        any failure. ``style`` overrides the scene style (pass "" for none) — the faces use
+        a photoreal style so the talking-head lip-sync looks real."""
         if not self._can_attempt():
             return None
-        full = f"{prompt}, {self.style}" if self.style else prompt
+        st = self.style if style is None else style
+        full = f"{prompt}, {st}" if st else prompt
+        neg = negative if negative is not None else self.negative
         name = self._hash("img", full) + ".png"
         path = os.path.join(self.cache_dir, name)
         if os.path.isfile(path):
@@ -214,7 +218,7 @@ class ImageGen:
             if os.path.isfile(path):
                 return name
             try:
-                img = self._gen_txt(full)
+                img = self._gen_txt(full, negative=neg)
                 tmp = path + ".tmp"; img.save(tmp, format="PNG"); os.replace(tmp, path)
                 return name
             except Exception as exc:  # noqa: BLE001

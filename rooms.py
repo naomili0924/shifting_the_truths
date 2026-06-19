@@ -216,17 +216,29 @@ def scene_manifests(case: dict, act: dict, gt, lang: str = "en",
     return scenes
 
 
-def portrait_prompt(char: dict) -> str:
-    """English portrait prompt for one of the fixed faces (stable across runs)."""
-    name = char.get("character", "a guest")
+# Negative prompt for the faces — push hard AWAY from illustration toward a real photo,
+# so the Wav2Lip talking-head looks like a real person, not a painting.
+PHOTO_NEG = ("painting, illustration, drawing, sketch, cartoon, anime, 3d render, cgi, "
+             "deformed, distorted face, extra fingers, text, watermark, blurry, "
+             "low quality, multiple people, sepia, monochrome, black and white, "
+             "vintage photo, old photograph, grainy")
+
+
+def portrait_prompt(char: dict, gender: str | None = None) -> str:
+    """English PHOTOREAL portrait prompt for a fixed suspect face (stable across runs).
+    *gender* ("man"/"woman", derived from the gender-matched voice) is included so the face
+    matches the voice — the case has no gender field, so without it SDXL guesses wrong.
+    Generated with PHOTO_NEG and style="" so the painted-scene style isn't appended."""
     role = char.get("role", "")
     look = (char.get("public_story", "") or "").split(".")[0].strip()
     desc = ", ".join(p for p in (role, look) if p)
+    who = gender or "person"
     return (
-        f"Character portrait of {name}"
-        + (f", {desc}" if desc else "")
-        + ". Head and shoulders, dramatic candlelit noir lighting, neutral "
-        "expression, plain dark background, painted illustration"
+        f"modern color photograph, photorealistic studio headshot of a {who}"
+        + (f" — {desc}" if desc else "")
+        + ", present day, neutral expression, looking straight at the camera, soft cinematic "
+          "lighting, plain dark background, 85mm, sharp focus, highly detailed, realistic "
+          "skin, one person"
     )
 
 
