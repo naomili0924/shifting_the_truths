@@ -202,8 +202,14 @@ function _playWhenReady(url, done, tries=0){
     if(p&&p.then) p.then(()=>_voiceStatus('▶ playing')).catch(()=>{ _voiceUnlocked=false; _voiceStatus('⚠ blocked — click 🔊'); _soundHint(); end(); });
   }).catch(()=>{ if(tries<60) setTimeout(()=>_playWhenReady(url,done,tries+1),500); else done(); });
 }
-function closeOverlay(id){ document.getElementById(id).classList.remove('show'); }
+let _overlayClosedAt = 0;
+function closeOverlay(id){ document.getElementById(id).classList.remove('show'); _overlayClosedAt = performance.now(); }
 function showOverlay(id){ document.getElementById(id).classList.add('show'); }
+// True while a popup is open, or for a moment after one closes — used to swallow the
+// click that dismissed the popup so it doesn't "fall through" to the Phaser hotspot/button
+// underneath the Continue button (which would re-open the card in a loop).
+function overlayBusy(){ return !!document.querySelector('.overlay.show')
+  || (performance.now() - _overlayClosedAt) < 400; }
 // The shared popup's subtitle: only the between-acts gossip sets it; everything else clears
 // it (so "Careless questions travel…" doesn't show on every item pickup/inspect).
 function setGossipSub(text){ const e=document.getElementById('gossipSub'); if(!e) return;
@@ -389,7 +395,7 @@ class PlayScene extends Phaser.Scene {
         zone.on('pointerover',()=>{ if(!o.collected){ this.tweens.add({targets:glow,alpha:0.5,duration:150}); } });
         zone.on('pointerout', ()=>{ this.tweens.add({targets:glow,alpha:0,duration:220}); });
         zone.on('pointerup',()=>{
-          if(this._dragged) return;
+          if(this._dragged || overlayBusy()) return;   // ignore the click that closed a popup
           if(o.kind==='collectible'){ o.collected ? doInspect(o.id) : doPickup(o.id); }
           else doInspect(o.id);
         });
@@ -442,18 +448,18 @@ class PlayScene extends Phaser.Scene {
 
     // evidence + next (fixed)
     fix(this.add.text(20,H-34, `🗂 ${(st.evidence||[]).length}`, {fontSize:'16px',color:'#bcb3a3'})
-      .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) openEvidence(); }));
+      .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) openEvidence(); }));
     if(kind!=='accuse' && kind!=='over'){
       const nextLabel = (st.phase_index>=st.phase_total) ? 'The police arrive ▸' : 'End phase ▸';
       fix(this.add.text(W-20,H-34, nextLabel, {fontSize:'15px',color:'#1a1408',
         backgroundColor:'#c9a14a', padding:{x:10,y:6}, fontStyle:'bold'}).setOrigin(1,0)
-        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) doNext(); }));
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) doNext(); }));
     }
     // zoom controls (search only) — symbols, no words
     if(kind==='search'){
       const mkZoom=(label,dx,f)=> fix(this.add.text(W-20-dx, H-78, label, {fontSize:'22px',color:'#e8e2d6',
         backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(1,0)
-        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) this.zoomBy(f); }));
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) this.zoomBy(f); }));
       mkZoom('+',0,1.25); mkZoom('−',52,0.8);
     }
     // scene navigation (search only, when the act has more than one sub-scene)
@@ -461,7 +467,7 @@ class PlayScene extends Phaser.Scene {
       const cnt=img.scenes.length, idx=Math.min(this.sceneIdx,cnt-1), navY=H-78;
       const arrow=(label,x,onClick)=> fix(this.add.text(x, navY, label, {fontSize:'22px',
         color:'#e8e2d6', backgroundColor:'#211c16', padding:{x:12,y:4}}).setOrigin(0,0)
-        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged) onClick(); }));
+        .setInteractive({useHandCursor:true}).on('pointerup',()=>{ if(!this._dragged && !overlayBusy()) onClick(); }));
       arrow('◂',20,()=>this.gotoScene(idx-1));
       fix(this.add.text(72, navY+5, `Scene ${idx+1}/${cnt}`, {fontSize:'14px',color:'#bcb3a3'}).setOrigin(0,0));
       arrow('▸',182,()=>this.gotoScene(idx+1));
