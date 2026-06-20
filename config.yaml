@@ -54,10 +54,24 @@ costs:
 # manifest, never from the picture.
 images:
   enabled: true
-  idmc_path: /workspace                           # (legacy; unused by the inpaint path)
+  idmc_path: /workspace                           # holds inference_driven_model_compiler (edit model import)
   provider: CUDAExecutionProvider                 # falls back to no-art if it can't load
   cache_dir: webui/assets/cache                   # served at /assets/cache/<name>
   negative: "people, person, hands, text, watermark, signature, frame, border, blurry, lowres, deformed"
+  # Scene art: a plot-related background painted by SDXL txt2img, then each clue/decoy
+  # item is edited ONTO it by our exported InstructPix2Pix ONNX model
+  # (OnTheFlyORTImageEditPipeline) — an imperative "add ..." edit, no mask. If the edit
+  # model can't load, imagegen falls back to the masked-inpaint path automatically.
+  edit_backend: instructpix2pix_onnx
+  edit_model: Jinyan0924/instruct-pix2pix-onnx    # private; needs HF_TOKEN in the env
+  edit_provider: CUDAExecutionProvider
+  edit_size: 512                                  # the model is exported at 512x512
+  edit_steps: 12
+  # image_guidance keeps the edit faithful to the painted background. Low values
+  # (1.5) let InstructPix2Pix over-edit the whole scene (and hallucinate hands);
+  # ~2.2 preserves the backdrop and embeds the item subtly.
+  edit_image_guidance: 2.2
+  edit_guidance: 7.5
   # Scenes are now built by an INPAINTING model (export_inpaint.py): a base backdrop
   # (full-mask txt2img) with clue items + decoy props inpainted into it. One English
   # model serves BOTH languages, because rooms.py builds every image prompt in English

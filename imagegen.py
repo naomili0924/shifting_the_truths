@@ -88,9 +88,26 @@ class ImageGen:
         self.guidance = float(cfg.get("guidance", 7.5))
         self.cache_dir = cfg.get("cache_dir") or os.path.join(HERE, "webui", "assets", "cache")
 
-        self._pipe = None       # inpaint pipeline (objects)
+        # Instruction-edit backend: our exported InstructPix2Pix ONNX model. When
+        # `edit_backend` is set, a scene is built as a plot-related SDXL txt2img
+        # background, then each clue/decoy item is edited ONTO it by the ONNX
+        # OnTheFlyORTImageEditPipeline — an imperative "add ..." edit, no mask.
+        # The model is exported at 512², so the edit pass runs at `edit_size`.
+        self.edit_backend = cfg.get("edit_backend")          # e.g. "instructpix2pix_onnx"
+        self.edit_model = cfg.get("edit_model", "Jinyan0924/instruct-pix2pix-onnx")
+        self.edit_provider = cfg.get("edit_provider", "CUDAExecutionProvider")
+        self.edit_size = int(cfg.get("edit_size", 512))
+        self.edit_steps = int(cfg.get("edit_steps", 12))
+        self.edit_image_guidance = float(cfg.get("edit_image_guidance", 1.5))
+        self.edit_guidance = float(cfg.get("edit_guidance", 7.5))
+        self.idmc_path = cfg.get("idmc_path", "/workspace")
+        self.hf_token = cfg.get("hf_token") or os.environ.get("HF_TOKEN")
+
+        self._pipe = None       # inpaint pipeline (objects, masked fallback path)
         self._txt = None        # txt2img pipeline (base scenes, faces)
+        self._edit = None       # InstructPix2Pix ONNX edit pipeline (objects, edit path)
         self._load_failed = False
+        self._edit_failed = False
         self._lock = threading.Lock()
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -108,22 +125,23 @@ class ImageGen:
         return self._can_attempt()
 
     # ---- pipeline (lazy) ---------------------------------------------
-    def _ensure_pipe(self):
-        if self._pipe is not None or self._load_failed:
-            return self._pipe
+    def _ensure_txt(self):
+        """Lazily load the SDXL txt2img pipeline (base scenes + faces). Returns it or None."""
+        if self._txt is not None or self._load_failed:
+            return self._txt
         with self._lock:
-            if self._pipe is not None or self._load_failed:
-                return self._pipe
+            if self._txt is not None or self._load_failed:
+                return self._txt
             try:
                 _patch_transformers_compat()
                 import torch
-                from diffusers import AutoPipelineForText2Image, AutoPipelineForInpainting
+                from diffusers import AutoPipelineForText2Image
                 use_cuda = (self.device == "cuda" and torch.cuda.is_available())
                 dtype = torch.float16 if (self.dtype == "float16" and use_cuda) else torch.float32
                 kw = {"torch_dtype": dtype, "use_safetensors": True}
                 if self.variant:
                     kw["variant"] = self.variant
-                logger.info("Loading diffusers SDXL pipelines from %s", self.model_dir)
+                logger.info("Loading diffusers SDXL txt2img from %s", self.model_dir)
                 try:
                     txt = AutoPipelineForText2Image.from_pretrained(self.model_dir, **kw)
                 except Exception:
@@ -131,23 +149,70 @@ class ImageGen:
                     txt = AutoPipelineForText2Image.from_pretrained(self.model_dir, **kw)
                 dev = "cuda" if use_cuda else "cpu"
                 txt = txt.to(dev)
-                # Build the inpaint pipeline from the SAME weights (no extra VRAM/download):
-                # base scenes come from reliable txt2img; objects are embedded by inpaint.
-                inp = AutoPipelineForInpainting.from_pipe(txt).to(dev)
-                for p in (txt, inp):
-                    try: p.set_progress_bar_config(disable=True)
-                    except Exception: pass
-                    try: p.safety_checker = None
-                    except Exception: pass
+                try: txt.set_progress_bar_config(disable=True)
+                except Exception: pass
+                try: txt.safety_checker = None
+                except Exception: pass
                 self._txt = txt
-                self._pipe = inp
-                logger.info("SDXL txt2img + inpaint ready (device=%s, dtype=%s).", dev, dtype)
+                logger.info("SDXL txt2img ready (device=%s, dtype=%s).", dev, dtype)
             except Exception as exc:  # noqa: BLE001 - never propagate
                 self._load_failed = True
-                logger.warning("Image generation disabled (pipeline load failed): %s", exc)
-                self._pipe = None
+                logger.warning("Image generation disabled (txt2img load failed): %s", exc)
                 self._txt = None
+        return self._txt
+
+    def _ensure_pipe(self):
+        """Lazily build the masked-inpaint pipeline from the txt2img weights (no edit
+        backend). ``from_pipe`` shares weights — no extra VRAM/download."""
+        if self._pipe is not None or self._load_failed:
+            return self._pipe
+        if self._ensure_txt() is None:
+            return None
+        with self._lock:
+            if self._pipe is not None or self._load_failed:
+                return self._pipe
+            try:
+                from diffusers import AutoPipelineForInpainting
+                inp = AutoPipelineForInpainting.from_pipe(self._txt).to(self._txt.device)
+                try: inp.set_progress_bar_config(disable=True)
+                except Exception: pass
+                try: inp.safety_checker = None
+                except Exception: pass
+                self._pipe = inp
+                logger.info("SDXL inpaint ready.")
+            except Exception as exc:  # noqa: BLE001 - never propagate
+                self._load_failed = True
+                logger.warning("Inpaint pipeline load failed: %s", exc)
+                self._pipe = None
         return self._pipe
+
+    def _ensure_edit_pipe(self):
+        """Lazily load our exported InstructPix2Pix ONNX edit pipeline
+        (OnTheFlyORTImageEditPipeline). Returns it or None on any failure."""
+        if self._edit is not None or self._edit_failed:
+            return self._edit
+        with self._lock:
+            if self._edit is not None or self._edit_failed:
+                return self._edit
+            try:
+                import sys
+                if self.idmc_path and self.idmc_path not in sys.path:
+                    sys.path.insert(0, self.idmc_path)
+                import torch
+                from inference_driven_model_compiler.optimum.onnxruntime import (
+                    OnTheFlyORTImageEditPipeline,
+                )
+                logger.info("Loading InstructPix2Pix ONNX edit pipeline (%s)", self.edit_model)
+                self._edit = OnTheFlyORTImageEditPipeline.from_pretrained(
+                    self.edit_model, export=False, token=self.hf_token,
+                    provider=self.edit_provider, torch_dtype=torch.float32,
+                )
+                logger.info("InstructPix2Pix ONNX edit pipeline ready.")
+            except Exception as exc:  # noqa: BLE001 - never propagate
+                self._edit_failed = True
+                logger.warning("Edit pipeline load failed (falling back to inpaint): %s", exc)
+                self._edit = None
+        return self._edit
 
     # ---- low-level generation (caller holds self._lock) --------------
     def _gen_txt(self, prompt, steps=None, guidance=None, negative=None):
@@ -191,6 +256,66 @@ class ImageGen:
         m = m.filter(ImageFilter.GaussianBlur(max(4, (x1 - x0) // 12)))
         return m, (x0, y0, x1, y1)
 
+    # ---- InstructPix2Pix edit helpers (edit backend) ----------------
+    @staticmethod
+    def _loc_phrase(x: float, y: float) -> str:
+        """A coarse spatial hint for the edit instruction. InstructPix2Pix has weak
+        spatial control, so this only nudges placement toward the object's box."""
+        h = "on the left" if x < 0.34 else "on the right" if x > 0.66 else "in the center"
+        v = "near the top" if y < 0.34 else "near the bottom" if y > 0.66 else ""
+        return f"{h} {v}".strip()
+
+    def _compose_via_edit(self, full_base, objects, scene_path, crops):
+        """Edit-backend scene: a plot-related SDXL txt2img background, then ALL clue/decoy
+        items added in a SINGLE InstructPix2Pix edit.
+
+        One edit, not a chain: each InstructPix2Pix pass is a full VAE encode→decode
+        round-trip, so chaining one edit per item compounds the round-trip error into a
+        garbled image. A single combined instruction keeps the backdrop intact. Each
+        item's evidence crop is its configured box cut from the finished scene."""
+        from PIL import Image
+        S = self.edit_size
+        base = self._gen_txt(full_base)                       # plot background (SDXL)
+        canvas = base.convert("RGB").resize((S, S), Image.LANCZOS)
+        # Build ONE combined instruction. Cap the item count so it stays within CLIP's
+        # 77-token limit and the edit stays focused; uncapped items still get a clickable
+        # box + crop below (cut from the scene), just not their own painted object.
+        phrases = []
+        for o in objects:
+            op = o.get("obj_prompt") or o.get("name", "an object")
+            loc = self._loc_phrase(o.get("x", .5), o.get("y", .5))
+            phrases.append(f"{op} {loc}".strip())
+        if phrases:
+            instruction = "add " + ", ".join(phrases[:4])
+            try:
+                canvas = self._edit(
+                    prompt=instruction, image=canvas,
+                    num_inference_steps=self.edit_steps,
+                    image_guidance_scale=self.edit_image_guidance,
+                    guidance_scale=self.edit_guidance,
+                ).images[0]
+            except Exception as exc:  # noqa: BLE001 - a failed edit still yields the backdrop
+                logger.warning("edit compose failed: %s", exc)
+        tmp = scene_path + ".tmp"; canvas.save(tmp, format="PNG"); os.replace(tmp, scene_path)
+        out_crops = {}
+        for o in objects:
+            oid = o.get("id"); c = crops.get(oid)
+            if not c:
+                continue
+            cx, cy, w, h = o.get("x", .5), o.get("y", .5), o.get("w", .25), o.get("h", .25)
+            x0 = int(max(0, (cx - w / 2) * S)); x1 = int(min(S, (cx + w / 2) * S))
+            y0 = int(max(0, (cy - h / 2) * S)); y1 = int(min(S, (cy + h / 2) * S))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            cpath = os.path.join(self.cache_dir, c)
+            try:
+                canvas.crop((x0, y0, x1, y1)).save(cpath + ".tmp", format="PNG")
+                os.replace(cpath + ".tmp", cpath)
+                out_crops[oid] = c
+            except Exception:  # noqa: BLE001
+                pass
+        return os.path.basename(scene_path), out_crops
+
     # ---- cache helpers ----------------------------------------------
     def _hash(self, *parts) -> str:
         key = "|".join(str(p) for p in parts)
@@ -212,7 +337,7 @@ class ImageGen:
         path = os.path.join(self.cache_dir, name)
         if os.path.isfile(path):
             return name
-        if self._ensure_pipe() is None:
+        if self._ensure_txt() is None:
             return None
         with self._lock:
             if os.path.isfile(path):
@@ -247,13 +372,22 @@ class ImageGen:
         if os.path.isfile(scene_path) and all(
                 os.path.isfile(os.path.join(self.cache_dir, c)) for c in crops.values()):
             return scene_name, crops
-        if self._ensure_pipe() is None:
+        # Resolve the object backend BEFORE taking the compose lock — the loaders
+        # acquire self._lock internally, so calling them inside would deadlock.
+        if self._ensure_txt() is None:
+            return None, {}
+        use_edit = bool(self.edit_backend) and self._ensure_edit_pipe() is not None
+        if not use_edit and self._ensure_pipe() is None:
             return None, {}
         with self._lock:
             if os.path.isfile(scene_path) and all(
                     os.path.isfile(os.path.join(self.cache_dir, c)) for c in crops.values()):
                 return scene_name, crops
             try:
+                # Edit backend: plot background + InstructPix2Pix "add item" edits.
+                if use_edit:
+                    return self._compose_via_edit(full_base, objects, scene_path, crops)
+                # Masked-inpaint backend (fallback): base scene + per-box inpaint.
                 canvas = self._gen_txt(full_base)   # reliable txt2img base scene
                 boxes = {}
                 for o in objects:
@@ -327,7 +461,9 @@ def dispose() -> None:
         try:
             inst._pipe = None
             inst._txt = None
+            inst._edit = None
             inst._load_failed = False
+            inst._edit_failed = False
         except Exception:  # noqa: BLE001
             pass
     _INSTANCES = {}
